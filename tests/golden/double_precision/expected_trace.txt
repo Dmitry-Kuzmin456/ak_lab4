@@ -1,0 +1,2 @@
+OUT_CSTR[0] <- char=79 addr=0008
+OUT_CSTR[0] <- char=52 addr=000B

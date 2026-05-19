@@ -1,0 +1,11 @@
+IN[0] -> AC=53
+IN[0] -> AC=50
+IN[0] -> AC=51
+IN[0] -> AC=49
+IN[0] -> AC=57
+IN[0] -> AC=10
+OUT[0] <- AC=49
+OUT[0] <- AC=50
+OUT[0] <- AC=51
+OUT[0] <- AC=53
+OUT[0] <- AC=57

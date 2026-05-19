@@ -1,0 +1,12 @@
+0000 - 040002 - LD arr_base
+000C - 1A0000 - IN 0
+000F - 190A - CMP_IMM 10
+0014 - 080007 - ST_IND p_write
+0028 - 040003 - LD count
+0060 - 050008 - LD_IND p_a
+006F - 17000C - CMP b_val
+0072 - 150078 - BGT do_swap
+007B - 080008 - ST_IND p_a
+00BB - 05000A - LD_IND p_print
+00BE - 1B0000 - OUT 0
+00D2 - 01 - HLT

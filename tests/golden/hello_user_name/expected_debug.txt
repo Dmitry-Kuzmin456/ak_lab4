@@ -1,0 +1,9 @@
+0000 - 1C0000 - OUT_CSTR question
+0003 - 1C0013 - OUT_CSTR hello
+0006 - 1A0000 - IN 0
+0009 - 190A - CMP_IMM 10
+000B - 120014 - BEQ done_read
+000E - 1B0000 - OUT 0
+0011 - 160006 - JMP read_loop
+0014 - 1C001B - OUT_CSTR suffix
+0017 - 01 - HLT
