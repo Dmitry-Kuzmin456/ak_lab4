@@ -337,7 +337,9 @@ uv run run_code program.asm --input input.txt --output output.txt --trace trace.
 пишется рядом с исходником в `program.trace`. Если `--output` не указан,
 результат программы печатается в терминал.
 
-Схема процессора находится в [docs/proc_scheme.drawio](docs/proc_scheme.drawio).
+Схема процессора находится в [docs/scheme.drawio](docs/scheme.drawio).
+
+![Схема процессора](docs/lab_4_scheme.drawio.png)
 
 ### DataPath
 
