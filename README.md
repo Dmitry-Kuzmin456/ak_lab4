@@ -339,7 +339,7 @@ uv run run_code program.asm --input input.txt --output output.txt --trace trace.
 
 Схема процессора находится в [docs/scheme.drawio](docs/scheme.drawio).
 
-![Схема процессора](docs/lab_4_scheme.drawio.png)
+![Схема процессора](docs/scheme_datapath.png)
 
 ### DataPath
 
