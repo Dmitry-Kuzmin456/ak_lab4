@@ -247,6 +247,7 @@ class ControlUnit:
         alu_op = AluOp((mc >> 8) & 0xF)
         mem = MemOp((mc >> 12) & 0x7)
         move = Move((mc >> 15) & 0x1F)
+        inc_ip = ((mc >> 20) & 0x1) == 1
 
         bus_val = self.datapath.get_src_value(src)
 
@@ -254,6 +255,9 @@ class ControlUnit:
             bus_val = self.datapath.execute_memory(mem)
         elif mem == MemOp.READ_DATA:
             bus_val = self.datapath.execute_memory(mem)
+
+        if inc_ip:
+            self.datapath.ip = (self.datapath.ip + 1) & 0xFFFF
 
         saved_ps = self.datapath.ps.copy()
         if alu_op == AluOp.PASS:

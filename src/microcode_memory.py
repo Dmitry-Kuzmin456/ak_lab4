@@ -7,6 +7,7 @@ def mc(
     alu: AluOp = AluOp.NONE,
     mem: MemOp = MemOp.NONE,
     move: Move = Move.NEXT,
+    inc_ip: bool = False,
 ):
     return (
         (src.value << 0)
@@ -14,6 +15,7 @@ def mc(
         | (alu.value << 8)
         | (mem.value << 12)
         | (move.value << 15)
+        | (int(inc_ip) << 20)
     )
 
 
@@ -22,47 +24,35 @@ microcode_memory = [0] * 256
 # ==========================================
 # Выборка команды
 microcode_memory[0] = mc(
-    dst=Dst.CR, mem=MemOp.READ_CMD
-)  # Чтение кода команды из памяти команд в CR
-microcode_memory[1] = mc(
-    src=Src.IP, alu=AluOp.INC, dst=Dst.IP, move=Move.DISPATCH_ADDR
-)  # Инкремент IP и переход к выбору адреса (для безадресных команд сразу к циклу выполнения)
+    dst=Dst.CR, mem=MemOp.READ_CMD, inc_ip=True, move=Move.DISPATCH_ADDR
+)  # Чтение кода команды в CR, инкремент IP и переход к выборке операнда/выполнению
 
 # ==========================================
 # Выборка адреса
 
 # Прямая адресация
 microcode_memory[2] = mc(
-    mem=MemOp.READ_CMD, dst=Dst.AR_H
-)  # Записываем старшие 8 бит адреса из памяти команд в AR
-microcode_memory[3] = mc(src=Src.IP, alu=AluOp.INC, dst=Dst.IP)  # Инкремент IP
-microcode_memory[4] = mc(
-    mem=MemOp.READ_CMD, dst=Dst.AR_L
-)  # Записываем младшие 8 бит адреса из памяти команд в AR
-microcode_memory[5] = mc(
-    src=Src.IP, alu=AluOp.INC, dst=Dst.IP, move=Move.DISPATCH_OP
-)  # Инкремент IP и переход к циклу выполнения
+    mem=MemOp.READ_CMD, dst=Dst.AR_H, inc_ip=True
+)  # Записываем старшие 8 бит адреса из памяти команд в AR и инкрементируем IP
+microcode_memory[3] = mc(
+    mem=MemOp.READ_CMD, dst=Dst.AR_L, inc_ip=True, move=Move.DISPATCH_OP
+)  # Записываем младшие 8 бит адреса, инкрементируем IP и переходим к выполнению
 
 # Прямая загрузка операнда
 microcode_memory[6] = mc(
-    src=Src.CR_IMM, dst=Dst.DR, mem=MemOp.READ_CMD
-)  # Запись операнда из памяти команд в регистр данных
-microcode_memory[7] = mc(
-    src=Src.IP, alu=AluOp.INC, dst=Dst.IP, move=Move.DISPATCH_OP
-)  # Инкремент IP и переход к циклу выполнения
+    src=Src.CR_IMM, dst=Dst.DR, mem=MemOp.READ_CMD, inc_ip=True, move=Move.DISPATCH_OP
+)  # Запись immediate из памяти команд в DR, инкремент IP и переход к выполнению
 
 # Косвенная адресация
 microcode_memory[8] = mc(
-    mem=MemOp.READ_CMD, dst=Dst.AR_H
-)  # Записываем старшие 8 бит адреса из памяти команд в AR
-microcode_memory[9] = mc(src=Src.IP, alu=AluOp.INC, dst=Dst.IP)  # Инкремент IP
+    mem=MemOp.READ_CMD, dst=Dst.AR_H, inc_ip=True
+)  # Записываем старшие 8 бит адреса из памяти команд в AR и инкрементируем IP
+microcode_memory[9] = mc(
+    mem=MemOp.READ_CMD, dst=Dst.AR_L, inc_ip=True
+)  # Записываем младшие 8 бит адреса из памяти команд в AR и инкрементируем IP
 microcode_memory[10] = mc(
-    mem=MemOp.READ_CMD, dst=Dst.AR_L
-)  # Записываем младшие 8 бит адреса из памяти команд в AR
-microcode_memory[11] = mc(mem=MemOp.READ_DATA, dst=Dst.AR)  # Чтение адреса из памяти
-microcode_memory[12] = mc(
-    src=Src.IP, alu=AluOp.INC, dst=Dst.IP, move=Move.DISPATCH_OP
-)  # Инкремент IP и переход к циклу выполнения
+    mem=MemOp.READ_DATA, dst=Dst.AR, move=Move.DISPATCH_OP
+)  # Чтение эффективного адреса из памяти данных и переход к выполнению
 
 # ==========================================
 # Выполнение команды
