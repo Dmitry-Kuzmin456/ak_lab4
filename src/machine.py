@@ -1,53 +1,21 @@
 import argparse
 import struct
-from dataclasses import dataclass
 
 from src.isa import Src, Dst, AluOp, MemOp, OpCode, Move
 from src.microcode_memory import microcode_memory
 
 
-INSTR_WITH_OPERAND = {
-    OpCode.LD,
-    OpCode.LD_IND,
-    OpCode.LD_IMM,
-    OpCode.ST,
-    OpCode.ST_IND,
-    OpCode.ADD,
-    OpCode.ADD_IND,
-    OpCode.ADD_IMM,
-    OpCode.MUL,
-    OpCode.DIV,
-    OpCode.MOD,
-    OpCode.SUB,
-    OpCode.SUB_IND,
-    OpCode.SUB_IMM,
-    OpCode.BEQ,
-    OpCode.BNE,
-    OpCode.BLT,
-    OpCode.BGT,
-    OpCode.JMP,
-    OpCode.CMP,
-    OpCode.CMP_IND,
-    OpCode.CMP_IMM,
-    OpCode.IN,
-    OpCode.OUT,
-    OpCode.OUT_CSTR,
-}
-
-IMM_ONEBYTE = {
-    OpCode.LD_IMM,
-    OpCode.ADD_IMM,
-    OpCode.SUB_IMM,
-    OpCode.CMP_IMM,
-}
+WORD_MASK = 0xFFFFFFFF
+UNSIGNED_MAX = WORD_MASK
+SIGNED_MIN = -0x80000000
+SIGNED_MAX = 0x7FFFFFFF
 
 
-@dataclass
-class DecodedInstruction:
-    ip: int
-    op: OpCode
-    operand: int | None
-    size: int
+def _to_signed32(value: int) -> int:
+    value &= WORD_MASK
+    if value > SIGNED_MAX:
+        return value - 0x100000000
+    return value
 
 
 class DataPath:
@@ -101,7 +69,7 @@ class DataPath:
             return self.command_memory[self.ip]
         return 0
 
-    def get_dst_value(self, dst: Dst, value: int):
+    def set_dst_value(self, dst: Dst, value: int):
         if dst == Dst.AC:
             self.ac = value
         elif dst == Dst.IP:
@@ -131,18 +99,15 @@ class DataPath:
         if operation == AluOp.NONE:
             return bus_value
 
-        left = self.ac
         if operation in [AluOp.INC, AluOp.DEC]:
             left = bus_value
             right = 1
-        elif operation == AluOp.PASS:
-            left = bus_value
-            right = 0
         else:
+            left = self.ac
             right = self.br
 
         result_raw = 0
-        if operation in [AluOp.ADD, AluOp.INC, AluOp.PASS]:
+        if operation in [AluOp.ADD, AluOp.INC]:
             result_raw = left + right
         elif operation == AluOp.MUL:
             result_raw = left * right
@@ -157,33 +122,35 @@ class DataPath:
         elif operation in [AluOp.SUB, AluOp.CMP, AluOp.DEC]:
             result_raw = left - right
 
-        if operation in [AluOp.ADD, AluOp.INC, AluOp.MUL]:
-            self.ps["C"] = result_raw > 0xFFFFFFFF
+        result = _to_signed32(result_raw)
+        left_u = left & WORD_MASK
+        right_u = right & WORD_MASK
+
+        if operation in [AluOp.ADD, AluOp.INC]:
+            self.ps["C"] = left_u + right_u > UNSIGNED_MAX
+        elif operation == AluOp.MUL:
+            self.ps["C"] = left_u * right_u > UNSIGNED_MAX
         elif operation in [AluOp.SUB, AluOp.CMP, AluOp.DEC]:
-            self.ps["C"] = result_raw < 0
+            self.ps["C"] = left_u < right_u
         else:
             self.ps["C"] = False
 
-        res_32 = result_raw & 0xFFFFFFFF
-
-        res_msb = (res_32 >> 31) & 1
-        carry_bit = 1 if self.ps["C"] else 0
-
-        if operation in [AluOp.ADD, AluOp.INC]:
-            self.ps["V"] = bool(carry_bit ^ res_msb)
-        elif operation == AluOp.MUL:
-            self.ps["V"] = result_raw < -0x80000000 or result_raw > 0x7FFFFFFF
-        elif operation in [AluOp.SUB, AluOp.CMP, AluOp.DEC]:
-            self.ps["V"] = bool(((left ^ right) & (left ^ res_32)) & 0x80000000)
+        if operation in [
+            AluOp.ADD,
+            AluOp.INC,
+            AluOp.MUL,
+            AluOp.SUB,
+            AluOp.CMP,
+            AluOp.DEC,
+        ]:
+            self.ps["V"] = result_raw < SIGNED_MIN or result_raw > SIGNED_MAX
         else:
             self.ps["V"] = False
 
-        self.ps["N"] = bool(res_msb)
-        self.ps["Z"] = res_32 == 0
+        self.ps["N"] = result < 0
+        self.ps["Z"] = result == 0
 
-        if res_32 > 0x7FFFFFFF:
-            return res_32 - 0x100000000
-        return res_32
+        return result
 
     def execute_memory(self, operation: MemOp):
         if operation == MemOp.READ_CMD:
@@ -197,7 +164,11 @@ class DataPath:
 
 
 class ControlUnit:
-    def __init__(self, datapath: DataPath, microcode: list[int]):
+    def __init__(
+        self,
+        datapath: DataPath,
+        microcode: list[int],
+    ):
         self.datapath = datapath
         self.microcode = microcode
         self.upc = 0
@@ -285,12 +256,15 @@ class ControlUnit:
             bus_val = self.datapath.execute_memory(mem)
 
         saved_ps = self.datapath.ps.copy()
-        alu_res = self.datapath.execute_alu(alu_op, bus_val)
+        if alu_op == AluOp.PASS:
+            alu_res = bus_val
+        else:
+            alu_res = self.datapath.execute_alu(alu_op, bus_val)
 
         if mem == MemOp.WRITE_DATA:
             self.datapath.execute_memory(mem)
 
-        self.datapath.get_dst_value(dst, alu_res)
+        self.datapath.set_dst_value(dst, alu_res)
         if dst == Dst.IP:
             self.datapath.ps = saved_ps
 
@@ -331,10 +305,6 @@ class ControlUnit:
             self.upc = self.addr_map[OpCode(self.datapath.cr)]
         elif move == Move.DISPATCH_OP:
             self.upc = self.exec_map[OpCode(self.datapath.cr)]
-        elif move == Move.SKIP_Z:
-            self.upc += 2 if self.datapath.ps["Z"] else 1
-        elif move == Move.SKIP_N:
-            self.upc += 2 if self.datapath.ps["N"] else 1
         elif move == Move.HLT:
             self.halted = True
         elif move == Move.CSTR_LOOP_OR_FETCH:
@@ -384,73 +354,10 @@ def _load_input(path: str | None) -> list[int]:
     return [ord(ch) for ch in text]
 
 
-def _decode(command_memory: list[int], ip: int) -> DecodedInstruction:
-    op = OpCode(command_memory[ip])
-    if op not in INSTR_WITH_OPERAND:
-        return DecodedInstruction(ip, op, None, 1)
-    if op in IMM_ONEBYTE:
-        return DecodedInstruction(ip, op, command_memory[ip + 1], 2)
-    operand = (command_memory[ip + 1] << 8) | command_memory[ip + 2]
-    return DecodedInstruction(ip, op, operand, 3)
-
-
-def _to_signed32(value: int) -> int:
-    value &= 0xFFFFFFFF
-    if value > 0x7FFFFFFF:
-        return value - 0x100000000
-    return value
-
-
-def _set_sub_flags(dp: DataPath, left: int, right: int) -> None:
-    result_raw = left - right
-    res_32 = result_raw & 0xFFFFFFFF
-    dp.ps["C"] = result_raw < 0
-    dp.ps["V"] = bool(((left ^ right) & (left ^ res_32)) & 0x80000000)
-    dp.ps["N"] = bool((res_32 >> 31) & 1)
-    dp.ps["Z"] = res_32 == 0
-
-
-def _try_superscalar_pair(dp: DataPath) -> str | None:
-    first = _decode(dp.command_memory, dp.ip)
-    if first.op != OpCode.LD or first.operand is None:
-        return None
-
-    second = _decode(dp.command_memory, dp.ip + first.size)
-    if second.op == OpCode.MUL and second.operand is not None:
-        left = dp.data_memory[first.operand]
-        right = dp.data_memory[second.operand]
-        dp.ac = _to_signed32(left * right)
-        dp.ps["C"] = left * right > 0xFFFFFFFF
-        dp.ps["V"] = left * right < -0x80000000 or left * right > 0x7FFFFFFF
-        dp.ps["N"] = dp.ac < 0
-        dp.ps["Z"] = dp.ac == 0
-        dp.ip += first.size + second.size
-        return (
-            f"issue=[{first.ip:04X}: LD {first.operand:04X}, "
-            + f"{second.ip:04X}: MUL {second.operand:04X}] "
-            + "parallel=1 pair=LD_MUL forwarding=LD_TO_MUL"
-        )
-
-    if second.op == OpCode.CMP and second.operand is not None:
-        left = dp.data_memory[first.operand]
-        right = dp.data_memory[second.operand]
-        dp.ac = _to_signed32(left)
-        _set_sub_flags(dp, left, right)
-        dp.ip += first.size + second.size
-        return (
-            f"issue=[{first.ip:04X}: LD {first.operand:04X}, "
-            + f"{second.ip:04X}: CMP {second.operand:04X}] "
-            + "parallel=1 pair=LD_CMP forwarding=LD_TO_CMP"
-        )
-
-    return None
-
-
 def run(
     binary_path: str,
     input_path: str | None,
     limit: int,
-    superscalar: bool,
     trace_path: str = "trace.log",
 ) -> str:
     cmd, data, entry = _load_program(binary_path)
@@ -464,36 +371,19 @@ def run(
     ticks = 0
     with open(trace_path, "w", encoding="utf-8") as trace:
         while (not cu.halted) and ticks < limit:
-            superscalar_event = None
-            if superscalar and cu.upc == 0:
-                superscalar_event = _try_superscalar_pair(dp)
-
-            if superscalar_event is None:
-                cu.tick()
-                trace.write(
-                    "tick="
-                    + str(ticks)
-                    + f" mode={'superscalar_fallback' if superscalar else 'scalar'}"
-                    + f" uPC={cu.upc:03d} IP={dp.ip:04X} CR={dp.cr:02X} "
-                    + f"AR={dp.ar:04X} AC={dp.ac} DR={dp.dr} BR={dp.br} "
-                    + "PS="
-                    + f"N{int(dp.ps['N'])}Z{int(dp.ps['Z'])}"
-                    + f"V{int(dp.ps['V'])}C{int(dp.ps['C'])}"
-                    + (f" {cu.last_io_event}" if cu.last_io_event else "")
-                    + "\n"
-                )
-            else:
-                trace.write(
-                    "tick="
-                    + str(ticks)
-                    + " mode=superscalar "
-                    + superscalar_event
-                    + f" IP={dp.ip:04X} AC={dp.ac} "
-                    + "PS="
-                    + f"N{int(dp.ps['N'])}Z{int(dp.ps['Z'])}"
-                    + f"V{int(dp.ps['V'])}C{int(dp.ps['C'])}"
-                    + "\n"
-                )
+            cu.tick()
+            trace.write(
+                "tick="
+                + str(ticks)
+                + " mode=scalar"
+                + f" uPC={cu.upc:03d} IP={dp.ip:04X} CR={dp.cr:02X} "
+                + f"AR={dp.ar:04X} AC={dp.ac} DR={dp.dr} BR={dp.br} "
+                + "PS="
+                + f"N{int(dp.ps['N'])}Z{int(dp.ps['Z'])}"
+                + f"V{int(dp.ps['V'])}C{int(dp.ps['C'])}"
+                + (f" {cu.last_io_event}" if cu.last_io_event else "")
+                + "\n"
+            )
             ticks += 1
 
     return "".join(chr(x) for x in dp.output_buffer)
@@ -505,11 +395,10 @@ def main() -> None:
     parser.add_argument("--input", default=None)
     parser.add_argument("--output", default=None)
     parser.add_argument("--limit", type=int, default=1000000)
-    parser.add_argument("--superscalar", action="store_true")
     parser.add_argument("--trace", default="trace.log")
     args = parser.parse_args()
 
-    out = run(args.binary, args.input, args.limit, args.superscalar, args.trace)
+    out = run(args.binary, args.input, args.limit, args.trace)
     if args.output is not None:
         with open(args.output, "w", encoding="utf-8") as f:
             f.write(out)

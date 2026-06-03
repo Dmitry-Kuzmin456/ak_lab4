@@ -1,5 +1,0 @@
-OUT_CSTR[0] <- char=87 addr=0000
-IN[0] -> AC=65
-OUT[0] <- AC=65
-IN[0] -> AC=10
-OUT_CSTR[0] <- char=33 addr=001B

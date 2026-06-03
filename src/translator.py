@@ -5,43 +5,13 @@ import re
 import struct
 from dataclasses import dataclass
 
-from src.isa import OpCode
-
-
-INSTR_WITH_OPERAND = {
-    OpCode.LD,
-    OpCode.LD_IND,
-    OpCode.LD_IMM,
-    OpCode.ST,
-    OpCode.ST_IND,
-    OpCode.ADD,
-    OpCode.ADD_IND,
-    OpCode.ADD_IMM,
-    OpCode.MUL,
-    OpCode.DIV,
-    OpCode.MOD,
-    OpCode.SUB,
-    OpCode.SUB_IND,
-    OpCode.SUB_IMM,
-    OpCode.BEQ,
-    OpCode.BNE,
-    OpCode.BLT,
-    OpCode.BGT,
-    OpCode.JMP,
-    OpCode.CMP,
-    OpCode.CMP_IND,
-    OpCode.CMP_IMM,
-    OpCode.IN,
-    OpCode.OUT,
-    OpCode.OUT_CSTR,
-}
-
-IMM_ONEBYTE = {
-    OpCode.LD_IMM,
-    OpCode.ADD_IMM,
-    OpCode.SUB_IMM,
-    OpCode.CMP_IMM,
-}
+from src.isa import (
+    INSTR_WITH_OPERAND,
+    OpCode,
+    encode_instruction,
+    instruction_hex,
+    instruction_size,
+)
 
 
 @dataclass
@@ -61,6 +31,13 @@ class ConditionalFrame:
         return self.parent_active and self.condition_active
 
 
+@dataclass
+class TranslationResult:
+    binary: bytes
+    parsed: list[dict]
+    labels: dict[str, int]
+
+
 def _clean(line: str) -> str:
     return line.split(";", 1)[0].split("#", 1)[0].strip()
 
@@ -75,33 +52,17 @@ def _parse_number(s: str) -> int:
 def _line_size(cmd: str | None) -> int:
     if cmd is None:
         return 0
-    name = cmd.upper()
-    if name == "JUMP":
-        name = "JMP"
-    op = OpCode[name]
-    if op in IMM_ONEBYTE:
-        return 2
-    if op in INSTR_WITH_OPERAND:
-        return 3
-    return 1
+    return instruction_size(_opcode(cmd))
 
 
-def _resolve(s: str, labels: dict[str, int]) -> int:
-    if s in labels:
-        return labels[s]
-    return _parse_number(s)
-
-
-def _opcode(name: str) -> OpCode:
-    up = name.upper()
-    if up == "JUMP":
-        up = "JMP"
-    return OpCode[up]
+def _opcode(code: str) -> OpCode:
+    if code.upper() == "JUMP":
+        code = "JMP"
+    return OpCode[code.upper()]
 
 
 def _replace_macro_params(line: str, bindings: dict[str, str]) -> str:
     for name, value in bindings.items():
-        line = line.replace("{" + name + "}", value)
         line = re.sub(rf"\b{re.escape(name)}\b", value, line)
     return line
 
@@ -141,10 +102,13 @@ def preprocess_source(source: str) -> str:
                 raise ValueError(f"Bad conditional directive: {line}")
             parent_active = is_active()
             name = parts[1]
-            is_defined = name in constants or name in macros
-            if directive == ".ifndef":
+            if directive == ".ifconst":
+                condition_active = name in constants
+            elif directive == ".ifndef":
+                is_defined = name in constants or name in macros
                 condition_active = not is_defined
             else:
+                is_defined = name in constants or name in macros
                 condition_active = is_defined
             conditionals.append(ConditionalFrame(parent_active, condition_active))
             continue
@@ -221,13 +185,9 @@ def parse_source(source: str):
     constants = {}
     parsed = []
 
-    for raw in lines:
-        line = _clean(raw)
-        if not line:
-            continue
-
+    for line in lines:
         if line.lower().startswith(".const"):
-            parts = line.split(maxsplit=2)
+            parts = line.split()
             if len(parts) != 3:
                 raise ValueError(f"Bad .const directive: {line}")
             constants[parts[1]] = _parse_number(parts[2])
@@ -243,7 +203,7 @@ def parse_source(source: str):
             continue
 
         if line.lower().startswith(".org"):
-            parts = line.split(maxsplit=1)
+            parts = line.split()
             if len(parts) != 2:
                 raise ValueError(f"Bad org directive: {line}")
             value = _parse_number(parts[1])
@@ -312,14 +272,13 @@ def parse_source(source: str):
                 data_addr += 1
                 continue
             if line.lower().startswith(".word"):
-                parts = line.split(maxsplit=1)
+                parts = line.split()
                 if len(parts) != 2:
                     raise ValueError(f"Bad .word directive: {line}")
                 val_s = parts[1].strip()
-                value = constants[val_s] if val_s in constants else _parse_number(val_s)
             else:
                 val_s = line.strip()
-                value = constants[val_s] if val_s in constants else _parse_number(val_s)
+            value = constants[val_s] if val_s in constants else _parse_number(val_s)
             parsed.append(
                 {
                     "section": section,
@@ -332,7 +291,8 @@ def parse_source(source: str):
             )
             data_addr += 1
             continue
-
+        
+        # секция text
         parts = line.split(maxsplit=1)
         mnemonic = parts[0]
         operand = parts[1].strip() if len(parts) > 1 else None
@@ -356,8 +316,7 @@ def parse_source(source: str):
     return parsed, labels, entry
 
 
-def assemble(source: str) -> bytes:
-    parsed, labels, entry = parse_source(source)
+def assemble_parsed(parsed, labels, entry) -> bytes:
     cmd = [0] * 65536
     data = {}
     max_cmd = 0
@@ -372,20 +331,15 @@ def assemble(source: str) -> bytes:
             continue
 
         op = _opcode(item["mnemonic"])
-        cmd[item["addr"]] = op.value
-        end = item["addr"]
+        operand = None
         if op in INSTR_WITH_OPERAND:
             if item["operand"] is None:
                 raise ValueError(f"Missing operand for {item['mnemonic']}")
             op_token = item["operand"]
-            value = labels[op_token] if op_token in labels else _parse_number(op_token)
-            if op in IMM_ONEBYTE:
-                cmd[item["addr"] + 1] = value & 0xFF
-                end = item["addr"] + 1
-            else:
-                cmd[item["addr"] + 1] = (value >> 8) & 0xFF
-                cmd[item["addr"] + 2] = value & 0xFF
-                end = item["addr"] + 2
+            operand = labels[op_token] if op_token in labels else _parse_number(op_token)
+        encoded = encode_instruction(op, operand)
+        cmd[item["addr"] : item["addr"] + len(encoded)] = encoded
+        end = item["addr"] + len(encoded) - 1
         max_cmd = max(max_cmd, end)
 
     cmd_blob = bytes(cmd[: max_cmd + 1] if max_cmd > 0 else [0])
@@ -400,46 +354,53 @@ def assemble(source: str) -> bytes:
     return bytes(out)
 
 
-def write_debug(source: str, path: str) -> None:
-    parsed, labels, _ = parse_source(source)
+def make_debug(parsed, labels) -> str:
+    lines = []
+    for item in parsed:
+        if item["section"] != "text" or item["mnemonic"] is None:
+            continue
+        op = _opcode(item["mnemonic"])
+        operand = None
+        if op in INSTR_WITH_OPERAND:
+            if item["operand"] is not None:
+                token = item["operand"]
+                operand = labels[token] if token in labels else _parse_number(token)
+            mnem = f"{item['mnemonic']} {item['operand']}"
+        else:
+            mnem = item["mnemonic"]
+        hexc = instruction_hex(op, operand)
+        lines.append(f"{item['addr']:04X} - {hexc} - {mnem}")
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
+def translate(source: str) -> TranslationResult:
+    parsed, labels, entry = parse_source(source)
+    return TranslationResult(assemble_parsed(parsed, labels, entry), parsed, labels)
+
+
+def write_debug(translation: TranslationResult, path: str) -> None:
     with open(path, "w", encoding="utf-8") as f:
-        for item in parsed:
-            if item["section"] != "text" or item["mnemonic"] is None:
-                continue
-            op = _opcode(item["mnemonic"])
-            if op in INSTR_WITH_OPERAND:
-                operand = 0
-                if item["operand"] is not None:
-                    token = item["operand"]
-                    operand = labels[token] if token in labels else _parse_number(token)
-                if op in IMM_ONEBYTE:
-                    hexc = f"{op.value:02X}{operand & 0xFF:02X}"
-                else:
-                    hexc = (
-                        f"{op.value:02X}{(operand >> 8) & 0xFF:02X}{operand & 0xFF:02X}"
-                    )
-                mnem = f"{item['mnemonic']} {item['operand']}"
-            else:
-                hexc = f"{op.value:02X}"
-                mnem = item["mnemonic"]
-            f.write(f"{item['addr']:04X} - {hexc} - {mnem}\n")
+        f.write(make_debug(translation.parsed, translation.labels))
+
+
+def write_output(source: str, output_path: str) -> bytes:
+    translation = translate(source)
+    with open(output_path, "wb") as f:
+        f.write(translation.binary)
+    write_debug(translation, output_path + ".log")
+    return translation.binary
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("source")
     parser.add_argument("output")
-    parser.add_argument("--debug", default=None)
     args = parser.parse_args()
 
     with open(args.source, encoding="utf-8") as f:
         text = f.read()
 
-    blob = assemble(text)
-    with open(args.output, "wb") as f:
-        f.write(blob)
-    if args.debug is not None:
-        write_debug(text, args.debug)
+    write_output(text, args.output)
 
 
 if __name__ == "__main__":

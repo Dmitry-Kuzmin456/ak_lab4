@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from enum import Enum
 
 
@@ -119,7 +120,81 @@ class Move(Enum):
     FETCH = 0x2
     DISPATCH_ADDR = 0x3  # Переход к блоку выбора адреса
     DISPATCH_OP = 0x4  # Переход к блоку выполнения команды
-    SKIP_Z = 0x5
-    SKIP_N = 0x6
     HLT = 0x7
     CSTR_LOOP_OR_FETCH = 0x8
+
+
+INSTR_WITH_OPERAND = {
+    OpCode.LD,
+    OpCode.LD_IND,
+    OpCode.LD_IMM,
+    OpCode.ST,
+    OpCode.ST_IND,
+    OpCode.ADD,
+    OpCode.ADD_IND,
+    OpCode.ADD_IMM,
+    OpCode.MUL,
+    OpCode.DIV,
+    OpCode.MOD,
+    OpCode.SUB,
+    OpCode.SUB_IND,
+    OpCode.SUB_IMM,
+    OpCode.BEQ,
+    OpCode.BNE,
+    OpCode.BLT,
+    OpCode.BGT,
+    OpCode.JMP,
+    OpCode.CMP,
+    OpCode.CMP_IND,
+    OpCode.CMP_IMM,
+    OpCode.IN,
+    OpCode.OUT,
+    OpCode.OUT_CSTR,
+}
+
+IMM_ONEBYTE = {
+    OpCode.LD_IMM,
+    OpCode.ADD_IMM,
+    OpCode.SUB_IMM,
+    OpCode.CMP_IMM,
+}
+
+
+@dataclass
+class DecodedInstruction:
+    ip: int
+    op: OpCode
+    operand: int | None
+    size: int
+
+
+def instruction_size(op: OpCode) -> int:
+    if op in IMM_ONEBYTE:
+        return 2
+    if op in INSTR_WITH_OPERAND:
+        return 3
+    return 1
+
+
+def encode_instruction(op: OpCode, operand: int | None = None) -> list[int]:
+    if op not in INSTR_WITH_OPERAND:
+        return [op.value]
+    if operand is None:
+        raise ValueError(f"Missing operand for {op.name}")
+    if op in IMM_ONEBYTE:
+        return [op.value, operand & 0xFF]
+    return [op.value, (operand >> 8) & 0xFF, operand & 0xFF]
+
+
+def instruction_hex(op: OpCode, operand: int | None = None) -> str:
+    return "".join(f"{byte:02X}" for byte in encode_instruction(op, operand))
+
+
+def decode_instruction(command_memory: list[int], ip: int) -> DecodedInstruction:
+    op = OpCode(command_memory[ip])
+    if op not in INSTR_WITH_OPERAND:
+        return DecodedInstruction(ip, op, None, 1)
+    if op in IMM_ONEBYTE:
+        return DecodedInstruction(ip, op, command_memory[ip + 1], 2)
+    operand = (command_memory[ip + 1] << 8) | command_memory[ip + 2]
+    return DecodedInstruction(ip, op, operand, 3)

@@ -20,5 +20,6 @@ dev = [
     "mypy>=1.19.1",
     "pre-commit>=4.5.1",
     "pytest>=9.0.1",
+    "pyyaml>=6.0.3",
     "ruff>=0.15.5",
 ]

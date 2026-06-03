@@ -1,6 +1,0 @@
-parallel=1 pair=LD_MUL forwarding=LD_TO_MUL
-parallel=1 pair=LD_CMP forwarding=LD_TO_CMP
-AC=906609
-OUT[0] <- AC=57
-OUT[0] <- AC=48
-OUT[0] <- AC=54

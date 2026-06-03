@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 
 from src import machine
-from src.translator import assemble
+from src.translator import write_output
 
 
 def run_source(
@@ -13,18 +13,16 @@ def run_source(
     output_path: Path | None,
     trace_path: Path | None,
     limit: int,
-    superscalar: bool,
 ) -> str:
     source = source_path.read_text(encoding="utf-8")
     binary_path = source_path.with_suffix(".bin")
-    binary_path.write_bytes(assemble(source))
+    write_output(source, str(binary_path))
 
     actual_trace_path = trace_path or source_path.with_suffix(".trace")
     output = machine.run(
         str(binary_path),
         str(input_path) if input_path is not None else None,
         limit,
-        superscalar,
         str(actual_trace_path),
     )
 
@@ -47,7 +45,6 @@ def main() -> None:
         help="trace file path; defaults to SOURCE.trace next to the asm file",
     )
     parser.add_argument("--limit", type=int, default=1000000)
-    parser.add_argument("--superscalar", action="store_true")
     args = parser.parse_args()
 
     output = run_source(
@@ -56,7 +53,6 @@ def main() -> None:
         Path(args.output) if args.output is not None else None,
         Path(args.trace) if args.trace is not None else None,
         args.limit,
-        args.superscalar,
     )
     if args.output is None:
         print(output, end="")
