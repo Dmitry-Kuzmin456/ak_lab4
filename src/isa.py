@@ -215,18 +215,29 @@ class Move(Enum):
     CSTR_LOOP_OR_FETCH = 0x8
     POLY_START = 0x9
     POLY_STEP = 0xA
+    PREPARE_OR_DISPATCH = 0xB
 
 
 class MicroOp(Enum):
     NOP = "NOP"
     FETCH = "FETCH"
-    SELECT_SRC = "SELECT_SRC"
-    SELECT_DST = "SELECT_DST"
-    READ_SELECTED_TO_SRC = "READ_SELECTED_TO_SRC"
-    READ_SELECTED_TO_DST = "READ_SELECTED_TO_DST"
-    WRITE_SRC_TO_SELECTED = "WRITE_SRC_TO_SELECTED"
-    WRITE_ALU_TO_SELECTED = "WRITE_ALU_TO_SELECTED"
+    PREPARE_OPERAND = "PREPARE_OPERAND"
+    LOAD_SRC = "LOAD_SRC"
+    LOAD_DST = "LOAD_DST"
+    STORE_DST = "STORE_DST"
     ALU = "ALU"
+
+
+class McSrc(Enum):
+    NONE = "NONE"
+    SRC_LATCH = "SRC_LATCH"
+    DST_LATCH = "DST_LATCH"
+    ZERO = "ZERO"
+
+
+class McDst(Enum):
+    NONE = "NONE"
+    ALU_LATCH = "ALU_LATCH"
 
 
 @dataclass(frozen=True)
@@ -234,30 +245,35 @@ class MicroCommand:
     op: MicroOp = MicroOp.NOP
     alu: AluOp = AluOp.NONE
     move: Move = Move.NEXT
+    left: McSrc = McSrc.NONE
+    right: McSrc = McSrc.NONE
+    dst: McDst = McDst.NONE
+    write_flags: bool = False
 
 
 class MicroProgramStart(IntEnum):
     FETCH = 0
-    HLT = 1
-    NOP = 2
-    MOV = 3
+    PREPARE_OPERAND = 1
+    HLT = 2
+    NOP = 3
+    MOV = 4
     ADD = 7
-    SUB = 14
-    MUL = 21
-    DIV = 28
-    MOD = 35
-    INC = 42
-    DEC = 46
-    CMP = 50
-    BEQ = 55
-    BNE = 56
-    BLT = 57
-    BGT = 58
-    JMP = 59
-    IN = 60
-    OUT = 61
-    OUT_CSTR = 62
-    POLY = 63
+    SUB = 11
+    MUL = 15
+    DIV = 19
+    MOD = 23
+    INC = 27
+    DEC = 30
+    CMP = 33
+    BEQ = 36
+    BNE = 37
+    BLT = 38
+    BGT = 39
+    JMP = 40
+    IN = 41
+    OUT = 42
+    OUT_CSTR = 43
+    POLY = 44
 
 
 EXEC_MAP = {

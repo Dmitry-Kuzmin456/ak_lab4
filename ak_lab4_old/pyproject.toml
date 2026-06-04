@@ -15,9 +15,6 @@ package = true
 where = ["."]
 include = ["src*"]
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-
 [dependency-groups]
 dev = [
     "mypy>=1.19.1",

@@ -1,0 +1,72 @@
+in_source: |
+  .section text
+  .org 0
+  _start:
+      LD low_a
+      ADD low_b
+      ST low_result
+      LD high_a
+      ADD high_b
+      ST high_result
+
+      LD low_result
+      CMP low_expected
+      BNE fail
+      LD high_result
+      CMP high_expected
+      BNE fail
+      OUT_CSTR ok
+      HLT
+
+  fail:
+      OUT_CSTR err
+      HLT
+
+  .section data
+  .org 0
+  low_a:
+      .word 5
+  low_b:
+      .word 6
+  high_a:
+      .word 1
+  high_b:
+      .word 2
+  low_result:
+      .word 0
+  high_result:
+      .word 0
+  low_expected:
+      .word 11
+  high_expected:
+      .word 3
+  ok:
+      .cstr "OK64"
+  err:
+      .cstr "ERR64"
+in_input: |2+
+
+in_limit: 100000
+out:
+  out_stdout: |-
+    OK64
+  out_code_log: |
+    0000 - 040000 - LD low_a
+    0003 - 0A0001 - ADD low_b
+    0006 - 070004 - ST low_result
+    0009 - 040002 - LD high_a
+    000C - 0A0003 - ADD high_b
+    000F - 070005 - ST high_result
+    0012 - 040004 - LD low_result
+    0015 - 170006 - CMP low_expected
+    0018 - 130028 - BNE fail
+    001B - 040005 - LD high_result
+    001E - 170007 - CMP high_expected
+    0021 - 130028 - BNE fail
+    0024 - 1C0008 - OUT_CSTR ok
+    0027 - 01 - HLT
+    0028 - 1C000D - OUT_CSTR err
+    002B - 01 - HLT
+  out_trace_contains: |
+    OUT_CSTR[0] <- char=79 addr=0008
+    OUT_CSTR[0] <- char=52 addr=000B
