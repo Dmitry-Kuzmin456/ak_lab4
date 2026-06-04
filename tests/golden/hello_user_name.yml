@@ -8,10 +8,10 @@ in_source: |
       OUT_CSTR hello
 
   read_loop:
-      IN 0
-      CMP_IMM NEWLINE
+      IN 0, R1
+      CMP #NEWLINE, R1
       BEQ done_read
-      OUT 0
+      OUT R1, 0
       JMP read_loop
 
   done_read:
@@ -31,21 +31,23 @@ in_input: |+
 
 in_limit: 100000
 out:
-  out_stdout: |-
-    What is your name?Hello, Alice!
+  out_stdout: What is your name?Hello, Alice!
   out_code_log: |
-    0000 - 1C0000 - OUT_CSTR question
-    0003 - 1C0013 - OUT_CSTR hello
-    0006 - 1A0000 - IN 0
-    0009 - 190A - CMP_IMM 10
-    000B - 120014 - BEQ done_read
-    000E - 1B0000 - OUT 0
-    0011 - 160006 - JMP read_loop
-    0014 - 1C001B - OUT_CSTR suffix
-    0017 - 01 - HLT
+    0000 - 10080000 - OUT_CSTR question
+    0004 - 10080013 - OUT_CSTR hello
+    0008 - 0E060000010000 - IN 0, R1
+    000F - 0805000A010000 - CMP #NEWLINE, R1
+    0016 - 09070025 - BEQ done_read
+    001A - 0F010000060000 - OUT R1, 0
+    0021 - 0D070008 - JMP read_loop
+    0025 - 1008001B - OUT_CSTR suffix
+    0029 - 01 - HLT
   out_trace_contains: |
-    OUT_CSTR[0] <- char=87 addr=0000
-    IN[0] -> AC=65
-    OUT[0] <- AC=65
-    IN[0] -> AC=10
-    OUT_CSTR[0] <- char=33 addr=001B
+    OUT_CSTR[0] <- char=63 addr=0011
+    OUT_CSTR[0] <- char=32 addr=0019
+    IN[0] -> R1=65
+    OUT[0] <- value=65
+    IN[0] -> R1=108
+    OUT[0] <- value=108
+    IN[0] -> R1=105
+    OUT[0] <- value=105

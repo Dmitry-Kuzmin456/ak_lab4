@@ -1,7 +1,16 @@
 import argparse
 import struct
 
-from src.isa import Src, Dst, AluOp, MemOp, OpCode, Move
+from src.isa import (
+    EXEC_MAP,
+    AluOp,
+    MicroOp,
+    Move,
+    Operand,
+    OperandKind,
+    OpCode,
+    decode_instruction,
+)
 from src.microcode_memory import microcode_memory
 
 
@@ -23,21 +32,26 @@ class DataPath:
         self.command_memory: list[int] = [0] * 65536
         self.data_memory: list[int] = [0] * 65536
 
-        self.ac: int = 0  # Аккумулятор (32 бита)
-        self.ip: int = 0  # Счетчик команд (16 бит)
-        self.ar: int = 0  # Адресный регистр (16 бит)
-        self.dr: int = 0  # Регистр данных (32 бита)
-        self.cr: int = 0  # Регистр команд (8 бит)
-        self.br: int = 0  # Буферный регистр (32 бита)
+        self.r: list[int] = [0, 0, 0]  # R1-R3
+        self.a: list[int] = [0, 0, 0]  # A1-A3
+        self.ip: int = 0
+        self.cr: int = 0
         self.ps: dict[str, bool] = {
             "N": False,
             "Z": False,
             "V": False,
             "C": False,
-        }  # Регистр состояния (4 бита)
+        }
 
-        self.input_buffer: list = []  # Очередь символов из файла
-        self.output_buffer: list = []  # Очередь вывода
+        self.dst_latch: int = 0
+        self.src_latch: int = 0
+        self.alu_latch: int = 0
+        self.src_desc: Operand | None = None
+        self.dst_desc: Operand | None = None
+        self.selected_operand: Operand | None = None
+
+        self.input_buffer: list[int] = []
+        self.output_buffer: list[int] = []
 
     def set_command_memory(self, command_memory: list[int]) -> None:
         self.command_memory = command_memory
@@ -45,283 +59,281 @@ class DataPath:
     def set_data_memory(self, data_memory: list[int]) -> None:
         self.data_memory = data_memory
 
-    def get_src_value(self, src: Src) -> int:
-        if src == Src.AC:
-            return self.ac
-        if src == Src.IP:
-            return self.ip
-        if src == Src.AR:
-            return self.ar
-        if src == Src.DR:
-            return self.dr
-        if src == Src.CR:
-            return self.cr
-        if src == Src.BR:
-            return self.br
-        if src == Src.PS:
-            return (
-                self.ps["N"] * 2**3
-                + self.ps["Z"] * 2**2
-                + self.ps["V"] * 2
-                + self.ps["C"]
-            )
-        if src == Src.CR_IMM:
-            return self.command_memory[self.ip]
-        return 0
+    def read_operand(self, operand: Operand) -> int:
+        if operand.kind == OperandKind.DATA_REG:
+            return self.r[operand.value]
+        if operand.kind == OperandKind.ADDR_REG:
+            return self.a[operand.value]
+        if operand.kind == OperandKind.DIRECT:
+            return self.data_memory[operand.value]
+        if operand.kind == OperandKind.INDIRECT:
+            return self.data_memory[self.a[operand.value]]
+        if operand.kind == OperandKind.IMMEDIATE:
+            return operand.value
+        if operand.kind == OperandKind.SPECIAL_REG:
+            return 0
+        if operand.kind in {OperandKind.PORT, OperandKind.CODE_ADDR, OperandKind.DATA_ADDR}:
+            return operand.value
+        raise ValueError(f"Cannot read operand: {operand}")
 
-    def set_dst_value(self, dst: Dst, value: int):
-        if dst == Dst.AC:
-            self.ac = value
-        elif dst == Dst.IP:
-            self.ip = value
-        elif dst == Dst.AR:
-            self.ar = value
-        elif dst == Dst.DR:
-            self.dr = value
-        elif dst == Dst.CR:
-            self.cr = value
-        elif dst == Dst.BR:
-            self.br = value
-        elif dst == Dst.PS:
-            self.ps["C"] = value % 2 == 1
-            value //= 2
-            self.ps["V"] = value % 2 == 1
-            value //= 2
-            self.ps["Z"] = value % 2 == 1
-            value //= 2
-            self.ps["N"] = value % 2 == 1
-        if dst == Dst.AR_L:
-            self.ar = (self.ar & 0xFF00) | (value & 0x00FF)
-        if dst == Dst.AR_H:
-            self.ar = (self.ar & 0x00FF) | (value << 8)
+    def read_address(self, operand: Operand) -> int:
+        if operand.kind in {OperandKind.DIRECT, OperandKind.DATA_ADDR}:
+            return operand.value
+        if operand.kind == OperandKind.ADDR_REG:
+            return self.a[operand.value]
+        if operand.kind == OperandKind.INDIRECT:
+            return self.a[operand.value]
+        if operand.kind == OperandKind.IMMEDIATE:
+            return operand.value
+        raise ValueError(f"Cannot use operand as address: {operand}")
 
-    def execute_alu(self, operation: AluOp, bus_value: int) -> int:
-        if operation == AluOp.NONE:
-            return bus_value
+    def write_operand(self, operand: Operand, value: int) -> None:
+        value = _to_signed32(value)
+        if operand.kind == OperandKind.DATA_REG:
+            self.r[operand.value] = value
+            return
+        if operand.kind == OperandKind.ADDR_REG:
+            self.a[operand.value] = value & 0xFFFF
+            return
+        if operand.kind == OperandKind.DIRECT:
+            self.data_memory[operand.value] = value
+            return
+        if operand.kind == OperandKind.INDIRECT:
+            self.data_memory[self.a[operand.value]] = value
+            return
+        if operand.kind == OperandKind.SPECIAL_REG:
+            return
+        raise ValueError(f"Cannot write operand: {operand}")
 
-        if operation in [AluOp.INC, AluOp.DEC]:
-            left = bus_value
+    def read_selected_operand(self) -> int:
+        if self.selected_operand is None:
+            raise ValueError("No selected operand")
+        return self.read_operand(self.selected_operand)
+
+    def write_selected_operand(self, value: int) -> None:
+        if self.selected_operand is None:
+            raise ValueError("No selected operand")
+        self.write_operand(self.selected_operand, value)
+
+    def execute_alu(self, operation: AluOp) -> int:
+        if operation == AluOp.PASS:
+            result_raw = self.src_latch
+            op_name = ""
+            left = self.src_latch
+            right = 0
+        elif operation == AluOp.INC:
+            left = self.dst_latch
             right = 1
-        else:
-            left = self.ac
-            right = self.br
-
-        result_raw = 0
-        if operation in [AluOp.ADD, AluOp.INC]:
             result_raw = left + right
-        elif operation == AluOp.MUL:
-            result_raw = left * right
-        elif operation == AluOp.DIV:
-            if right == 0:
-                raise ZeroDivisionError("DIV by zero")
-            result_raw = int(left / right)
-        elif operation == AluOp.MOD:
-            if right == 0:
-                raise ZeroDivisionError("MOD by zero")
-            result_raw = left % right
-        elif operation in [AluOp.SUB, AluOp.CMP, AluOp.DEC]:
+            op_name = "add"
+        elif operation == AluOp.DEC:
+            left = self.dst_latch
+            right = 1
             result_raw = left - right
+            op_name = "sub"
+        else:
+            left = self.dst_latch
+            right = self.src_latch
+            if operation == AluOp.ADD:
+                result_raw = left + right
+                op_name = "add"
+            elif operation == AluOp.SUB:
+                result_raw = left - right
+                op_name = "sub"
+            elif operation == AluOp.MUL:
+                result_raw = left * right
+                op_name = "mul"
+            elif operation == AluOp.DIV:
+                if right == 0:
+                    raise ZeroDivisionError("DIV by zero")
+                result_raw = int(left / right)
+                op_name = ""
+            elif operation == AluOp.MOD:
+                if right == 0:
+                    raise ZeroDivisionError("MOD by zero")
+                result_raw = left % right
+                op_name = ""
+            else:
+                result_raw = self.src_latch
+                op_name = ""
 
         result = _to_signed32(result_raw)
         left_u = left & WORD_MASK
         right_u = right & WORD_MASK
-
-        if operation in [AluOp.ADD, AluOp.INC]:
+        if op_name == "add":
             self.ps["C"] = left_u + right_u > UNSIGNED_MAX
-        elif operation == AluOp.MUL:
-            self.ps["C"] = left_u * right_u > UNSIGNED_MAX
-        elif operation in [AluOp.SUB, AluOp.CMP, AluOp.DEC]:
+        elif op_name == "sub":
             self.ps["C"] = left_u < right_u
+        elif op_name == "mul":
+            self.ps["C"] = left_u * right_u > UNSIGNED_MAX
         else:
             self.ps["C"] = False
 
-        if operation in [
-            AluOp.ADD,
-            AluOp.INC,
-            AluOp.MUL,
-            AluOp.SUB,
-            AluOp.CMP,
-            AluOp.DEC,
-        ]:
-            self.ps["V"] = result_raw < SIGNED_MIN or result_raw > SIGNED_MAX
-        else:
-            self.ps["V"] = False
-
+        self.ps["V"] = (
+            op_name in {"add", "sub", "mul"}
+            and (result_raw < SIGNED_MIN or result_raw > SIGNED_MAX)
+        )
         self.ps["N"] = result < 0
         self.ps["Z"] = result == 0
-
+        self.alu_latch = result
         return result
-
-    def execute_memory(self, operation: MemOp):
-        if operation == MemOp.READ_CMD:
-            return self.command_memory[self.ip]
-        if operation == MemOp.READ_DATA:
-            self.dr = self.data_memory[self.ar]
-            return self.dr
-        if operation == MemOp.WRITE_DATA:
-            self.data_memory[self.ar] = self.dr
-        return 0
 
 
 class ControlUnit:
-    def __init__(
-        self,
-        datapath: DataPath,
-        microcode: list[int],
-    ):
+    def __init__(self, datapath: DataPath, microcode):
         self.datapath = datapath
         self.microcode = microcode
         self.upc = 0
         self.halted = False
         self.last_io_event = ""
+        self.current_instruction = None
+        self.poly_x = 0
+        self.poly_index = 0
+        self.poly_result_raw = 0
 
-        self.addr_map = {
-            OpCode.HLT: 13,
-            OpCode.CLA: 14,
-            OpCode.NOP: 15,
-            OpCode.LD: 2,
-            OpCode.ST: 2,
-            OpCode.ADD: 2,
-            OpCode.MUL: 2,
-            OpCode.DIV: 2,
-            OpCode.MOD: 2,
-            OpCode.SUB: 2,
-            OpCode.CMP: 2,
-            OpCode.JMP: 2,
-            OpCode.BEQ: 2,
-            OpCode.BNE: 2,
-            OpCode.BLT: 2,
-            OpCode.BGT: 2,
-            OpCode.IN: 2,
-            OpCode.OUT: 2,
-            OpCode.OUT_CSTR: 2,
-            OpCode.LD_IMM: 6,
-            OpCode.ADD_IMM: 6,
-            OpCode.SUB_IMM: 6,
-            OpCode.CMP_IMM: 6,
-            OpCode.LD_IND: 8,
-            OpCode.ST_IND: 8,
-            OpCode.ADD_IND: 8,
-            OpCode.SUB_IND: 8,
-            OpCode.CMP_IND: 8,
-            OpCode.INC: 32,
-            OpCode.DEC: 33,
-        }
+    def _operand(self, index: int) -> Operand:
+        if self.current_instruction is None:
+            raise ValueError("Instruction is not decoded")
+        return self.current_instruction.operands[index]
 
-        self.exec_map = {
-            OpCode.LD: 16,
-            OpCode.LD_IMM: 17,
-            OpCode.ST: 18,
-            OpCode.ADD_IMM: 20,
-            OpCode.ADD: 22,
-            OpCode.MUL: 43,
-            OpCode.DIV: 45,
-            OpCode.MOD: 47,
-            OpCode.SUB: 24,
-            OpCode.SUB_IMM: 26,
-            OpCode.CMP: 28,
-            OpCode.CMP_IMM: 30,
-            OpCode.INC: 32,
-            OpCode.DEC: 33,
-            OpCode.LD_IND: 16,
-            OpCode.ST_IND: 18,
-            OpCode.ADD_IND: 22,
-            OpCode.SUB_IND: 24,
-            OpCode.CMP_IND: 28,
-            OpCode.JMP: 34,
-            OpCode.BEQ: 35,
-            OpCode.BNE: 36,
-            OpCode.BLT: 37,
-            OpCode.BGT: 38,
-            OpCode.IN: 39,
-            OpCode.OUT: 40,
-            OpCode.OUT_CSTR: 41,
-        }
+    def _dst_operand(self) -> Operand:
+        if self.current_instruction is None:
+            raise ValueError("Instruction is not decoded")
+        index = 1 if len(self.current_instruction.operands) > 1 else 0
+        return self.current_instruction.operands[index]
 
-    def tick(self):
+    def tick(self) -> None:
         self.last_io_event = ""
         mc = self.microcode[self.upc]
+        dp = self.datapath
 
-        src = Src((mc >> 0) & 0xF)
-        dst = Dst((mc >> 4) & 0xF)
-        alu_op = AluOp((mc >> 8) & 0xF)
-        mem = MemOp((mc >> 12) & 0x7)
-        move = Move((mc >> 15) & 0x1F)
-        inc_ip = ((mc >> 20) & 0x1) == 1
+        if mc.op == MicroOp.FETCH:
+            inst = decode_instruction(dp.command_memory, dp.ip)
+            self.current_instruction = inst
+            dp.src_desc = inst.operands[0] if inst.operands else None
+            dp.dst_desc = inst.operands[1] if len(inst.operands) > 1 else dp.src_desc
+            dp.selected_operand = None
+            dp.cr = inst.op.value
+            dp.ip = (dp.ip + inst.size) & 0xFFFF
+        elif mc.op == MicroOp.SELECT_SRC:
+            dp.selected_operand = self._operand(0)
+        elif mc.op == MicroOp.SELECT_DST:
+            dp.selected_operand = self._dst_operand()
+        elif mc.op == MicroOp.READ_SELECTED_TO_SRC:
+            dp.src_latch = dp.read_selected_operand()
+        elif mc.op == MicroOp.READ_SELECTED_TO_DST:
+            dp.dst_latch = dp.read_selected_operand()
+        elif mc.op == MicroOp.ALU:
+            dp.execute_alu(mc.alu)
+        elif mc.op == MicroOp.WRITE_ALU_TO_SELECTED:
+            dp.write_selected_operand(dp.alu_latch)
+        elif mc.op == MicroOp.WRITE_SRC_TO_SELECTED:
+            dp.write_selected_operand(dp.src_latch)
 
-        bus_val = self.datapath.get_src_value(src)
-
-        if mem == MemOp.READ_CMD:
-            bus_val = self.datapath.execute_memory(mem)
-        elif mem == MemOp.READ_DATA:
-            bus_val = self.datapath.execute_memory(mem)
-
-        if inc_ip:
-            self.datapath.ip = (self.datapath.ip + 1) & 0xFFFF
-
-        saved_ps = self.datapath.ps.copy()
-        if alu_op == AluOp.PASS:
-            alu_res = bus_val
-        else:
-            alu_res = self.datapath.execute_alu(alu_op, bus_val)
-
-        if mem == MemOp.WRITE_DATA:
-            self.datapath.execute_memory(mem)
-
-        self.datapath.set_dst_value(dst, alu_res)
-        if dst == Dst.IP:
-            self.datapath.ps = saved_ps
-
-        if move == Move.FETCH:
-            if self.upc == self.exec_map[OpCode.BEQ]:
-                if self.datapath.ps["Z"]:
-                    self.datapath.ip = self.datapath.ar
-            elif self.upc == self.exec_map[OpCode.BNE]:
-                if not self.datapath.ps["Z"]:
-                    self.datapath.ip = self.datapath.ar
-            elif self.upc == self.exec_map[OpCode.BLT]:
-                if self.datapath.ps["N"]:
-                    self.datapath.ip = self.datapath.ar
-            elif self.upc == self.exec_map[OpCode.BGT]:
-                if (not self.datapath.ps["N"]) and (not self.datapath.ps["Z"]):
-                    self.datapath.ip = self.datapath.ar
-            elif self.upc == self.exec_map[OpCode.IN]:
-                if self.datapath.ar != 0:
-                    raise ValueError(f"Unsupported input port: {self.datapath.ar}")
-                if not self.datapath.input_buffer:
-                    self.halted = True
-                    return
-                self.datapath.ac = self.datapath.input_buffer.pop(0)
-                self.last_io_event = f"IN[{self.datapath.ar}] -> AC={self.datapath.ac}"
-            elif self.upc == self.exec_map[OpCode.OUT]:
-                if self.datapath.ar != 0:
-                    raise ValueError(f"Unsupported output port: {self.datapath.ar}")
-                self.datapath.output_buffer.append(self.datapath.ac & 0xFF)
-                self.last_io_event = (
-                    f"OUT[{self.datapath.ar}] <- AC={self.datapath.ac & 0xFF}"
-                )
-
-        if move == Move.NEXT:
+        if mc.move == Move.NEXT:
             self.upc += 1
-        elif move == Move.FETCH:
+        elif mc.move == Move.FETCH:
             self.upc = 0
-        elif move == Move.DISPATCH_ADDR:
-            self.upc = self.addr_map[OpCode(self.datapath.cr)]
-        elif move == Move.DISPATCH_OP:
-            self.upc = self.exec_map[OpCode(self.datapath.cr)]
-        elif move == Move.HLT:
+        elif mc.move == Move.DISPATCH_OP:
+            if self.current_instruction is None:
+                raise ValueError("Cannot dispatch without instruction")
+            self.upc = EXEC_MAP[self.current_instruction.op]
+        elif mc.move == Move.HLT:
             self.halted = True
-        elif move == Move.CSTR_LOOP_OR_FETCH:
-            if self.datapath.dr == 0:
-                self.upc = 0
-            else:
-                self.datapath.output_buffer.append(self.datapath.dr & 0xFF)
-                self.last_io_event = (
-                    f"OUT_CSTR[0] <- char={self.datapath.dr & 0xFF} "
-                    + f"addr={self.datapath.ar:04X}"
-                )
-                self.datapath.ar = (self.datapath.ar + 1) & 0xFFFF
-                self.upc = self.exec_map[OpCode.OUT_CSTR]
+        elif mc.move == Move.BRANCH:
+            self._branch()
+            self.upc = 0
+        elif mc.move == Move.IN:
+            self._input()
+            self.upc = 0
+        elif mc.move == Move.OUT:
+            self._output()
+            self.upc = 0
+        elif mc.move == Move.CSTR_LOOP_OR_FETCH:
+            self._out_cstr()
+            self.upc = 0
+        elif mc.move == Move.POLY_START:
+            self._poly_start()
+            self.upc = EXEC_MAP[OpCode.POLY] + 1
+        elif mc.move == Move.POLY_STEP:
+            self._poly_step()
+
+    def _branch(self) -> None:
+        if self.current_instruction is None:
+            raise ValueError("No instruction for branch")
+        op = self.current_instruction.op
+        target = self.datapath.read_operand(self._operand(0)) & 0xFFFF
+        if op == OpCode.JMP:
+            self.datapath.ip = target
+        elif op == OpCode.BEQ and self.datapath.ps["Z"]:
+            self.datapath.ip = target
+        elif op == OpCode.BNE and not self.datapath.ps["Z"]:
+            self.datapath.ip = target
+        elif op == OpCode.BLT and self.datapath.ps["N"]:
+            self.datapath.ip = target
+        elif op == OpCode.BGT and not self.datapath.ps["N"] and not self.datapath.ps["Z"]:
+            self.datapath.ip = target
+
+    def _input(self) -> None:
+        port = self.datapath.read_operand(self._operand(0))
+        if port != 0:
+            raise ValueError(f"Unsupported input port: {port}")
+        if not self.datapath.input_buffer:
+            self.halted = True
+            return
+        value = self.datapath.input_buffer.pop(0)
+        self.datapath.write_operand(self._operand(1), value)
+        self.datapath.src_latch = value
+        self.datapath.execute_alu(AluOp.PASS)
+        self.last_io_event = f"IN[{port}] -> R{self._operand(1).value + 1}={value}"
+
+    def _output(self) -> None:
+        port = self.datapath.read_operand(self._operand(1))
+        if port != 0:
+            raise ValueError(f"Unsupported output port: {port}")
+        value = self.datapath.read_operand(self._operand(0)) & 0xFF
+        self.datapath.output_buffer.append(value)
+        self.last_io_event = f"OUT[{port}] <- value={value}"
+
+    def _out_cstr(self) -> None:
+        addr = self.datapath.read_address(self._operand(0)) & 0xFFFF
+        while self.datapath.data_memory[addr] != 0:
+            value = self.datapath.data_memory[addr] & 0xFF
+            self.datapath.output_buffer.append(value)
+            self.last_io_event = f"OUT_CSTR[0] <- char={value} addr={addr:04X}"
+            addr = (addr + 1) & 0xFFFF
+
+    def _poly_start(self) -> None:
+        if self.current_instruction is None:
+            raise ValueError("No instruction for POLY")
+        operands = self.current_instruction.operands
+        self.poly_x = self.datapath.read_operand(operands[0])
+        self.poly_index = len(operands) - 2
+        self.poly_result_raw = 0
+
+    def _poly_step(self) -> None:
+        if self.current_instruction is None:
+            raise ValueError("No instruction for POLY")
+        operands = self.current_instruction.operands
+        dst = operands[-1]
+        if self.poly_index >= 1:
+            coeff = self.datapath.read_operand(operands[self.poly_index])
+            self.poly_result_raw = self.poly_result_raw * self.poly_x + coeff
+            self.poly_index -= 1
+            self.upc = EXEC_MAP[OpCode.POLY] + 1
+            return
+
+        result = _to_signed32(self.poly_result_raw)
+        self.datapath.write_operand(dst, result)
+        self.datapath.ps["C"] = (
+            self.poly_result_raw < 0 or self.poly_result_raw > UNSIGNED_MAX
+        )
+        self.datapath.ps["V"] = (
+            self.poly_result_raw < SIGNED_MIN or self.poly_result_raw > SIGNED_MAX
+        )
+        self.datapath.ps["N"] = result < 0
+        self.datapath.ps["Z"] = result == 0
+        self.upc = 0
 
 
 def _load_program(path: str) -> tuple[list[int], list[int], int]:
@@ -332,7 +344,8 @@ def _load_program(path: str) -> tuple[list[int], list[int], int]:
 
     entry = struct.unpack_from(">H", blob, 4)[0]
     cmd_len = struct.unpack_from(">H", blob, 6)[0]
-    pos = 8
+    data_len = struct.unpack_from(">H", blob, 8)[0]
+    pos = 10
     cmd = [0] * 65536
     cmd_slice = blob[pos : pos + cmd_len]
     pos += cmd_len
@@ -340,12 +353,9 @@ def _load_program(path: str) -> tuple[list[int], list[int], int]:
         cmd[i] = b
 
     data = [0] * 65536
-    items = struct.unpack_from(">H", blob, pos)[0]
-    pos += 2
-    for _ in range(items):
-        addr, value = struct.unpack_from(">Hi", blob, pos)
-        pos += 6
-        data[addr] = value
+    for addr in range(data_len):
+        data[addr] = struct.unpack_from(">i", blob, pos)[0]
+        pos += 4
 
     return cmd, data, entry
 
@@ -381,7 +391,8 @@ def run(
                 + str(ticks)
                 + " mode=scalar"
                 + f" uPC={cu.upc:03d} IP={dp.ip:04X} CR={dp.cr:02X} "
-                + f"AR={dp.ar:04X} AC={dp.ac} DR={dp.dr} BR={dp.br} "
+                + f"R1={dp.r[0]} R2={dp.r[1]} R3={dp.r[2]} "
+                + f"A1={dp.a[0]:04X} A2={dp.a[1]:04X} A3={dp.a[2]:04X} "
                 + "PS="
                 + f"N{int(dp.ps['N'])}Z{int(dp.ps['Z'])}"
                 + f"V{int(dp.ps['V'])}C{int(dp.ps['C'])}"

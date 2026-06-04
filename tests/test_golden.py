@@ -91,14 +91,14 @@ def test_ifconst_only_matches_constants() -> None:
         HLT
     .endmacro
     .ifconst FEATURE
-        LD_IMM 'N'
+        MOV #'N', R1
     .else
-        LD_IMM 'Y'
+        MOV #'Y', R1
     .endif
     """
 
-    assert "LD_IMM 'Y'" in preprocess_source(source)
-    assert "LD_IMM 'N'" not in preprocess_source(source)
+    assert "MOV #'Y', R1" in preprocess_source(source)
+    assert "MOV #'N', R1" not in preprocess_source(source)
 
 
 def test_translator_writes_default_debug_log(
@@ -144,4 +144,4 @@ def test_run_code_assembles_and_runs_source(tmp_path: Path) -> None:
     assert output_path.read_text(encoding="utf-8") == "abc"
     assert source_path.with_suffix(".bin").exists()
     assert source_path.with_suffix(".bin.log").exists()
-    assert "IN[0] -> AC=97" in trace_path.read_text(encoding="utf-8")
+    assert "IN[0] -> R1=97" in trace_path.read_text(encoding="utf-8")

@@ -4,104 +4,110 @@ in_source: |
   .section text
   .org 0
   _start:
-      LD arr_base
-      ST p_write
-      LD zero
-      ST count
+      MOV arr_base, R1
+      MOV R1, p_write
+      MOV zero, R1
+      MOV R1, count
 
   read_loop:
-      IN 0
-      CMP_IMM NEWLINE
+      IN 0, R1
+      CMP #NEWLINE, R1
       BEQ read_done
-      ST_IND p_write
-      LD p_write
-      INC
-      ST p_write
-      LD count
-      INC
-      ST count
+      MOV p_write, A1
+      MOV R1, (A1)
+      MOV p_write, R1
+      INC R1
+      MOV R1, p_write
+      MOV count, R1
+      INC R1
+      MOV R1, count
       JMP read_loop
 
   read_done:
-      LD count
-      CMP one
+      MOV count, R1
+      CMP one, R1
       BLT print_done
       BEQ print_loop_init
 
-      LD count
-      DEC
-      ST outer_left
+      MOV count, R1
+      DEC R1
+      MOV R1, outer_left
 
   outer_loop:
-      LD outer_left
-      CMP zero
+      MOV outer_left, R1
+      CMP zero, R1
       BEQ print_loop_init
 
-      LD arr_base
-      ST p_a
-      LD arr_base
-      INC
-      ST p_b
-      LD outer_left
-      ST inner_left
+      MOV arr_base, R1
+      MOV R1, p_a
+      MOV arr_base, R1
+      INC R1
+      MOV R1, p_b
+      MOV outer_left, R1
+      MOV R1, inner_left
 
   inner_loop:
-      LD inner_left
-      CMP zero
+      MOV inner_left, R1
+      CMP zero, R1
       BEQ outer_step
 
-      LD_IND p_a
-      ST a_val
-      LD_IND p_b
-      ST b_val
+      MOV p_a, A1
+      MOV (A1), R1
+      MOV R1, a_val
+      MOV p_b, A1
+      MOV (A1), R1
+      MOV R1, b_val
 
-      LD a_val
-      CMP b_val
+      MOV a_val, R1
+      CMP b_val, R1
       BGT do_swap
       JMP no_swap
 
   do_swap:
-      LD b_val
-      ST_IND p_a
-      LD a_val
-      ST_IND p_b
+      MOV b_val, R1
+      MOV p_a, A1
+      MOV R1, (A1)
+      MOV a_val, R1
+      MOV p_b, A1
+      MOV R1, (A1)
 
   no_swap:
-      LD p_a
-      INC
-      ST p_a
-      LD p_b
-      INC
-      ST p_b
-      LD inner_left
-      DEC
-      ST inner_left
+      MOV p_a, R1
+      INC R1
+      MOV R1, p_a
+      MOV p_b, R1
+      INC R1
+      MOV R1, p_b
+      MOV inner_left, R1
+      DEC R1
+      MOV R1, inner_left
       JMP inner_loop
 
   outer_step:
-      LD outer_left
-      DEC
-      ST outer_left
+      MOV outer_left, R1
+      DEC R1
+      MOV R1, outer_left
       JMP outer_loop
 
   print_loop_init:
-      LD arr_base
-      ST p_print
-      LD count
-      ST print_left
+      MOV arr_base, R1
+      MOV R1, p_print
+      MOV count, R1
+      MOV R1, print_left
 
   print_loop:
-      LD print_left
-      CMP zero
+      MOV print_left, R1
+      CMP zero, R1
       BEQ print_done
-      LD_IND p_print
-      OUT 0
-      LD p_print
-      INC
-      ST p_print
-      LD print_left
-      DEC
-      ST print_left
+      MOV p_print, A1
+      MOV (A1), R1
+      OUT R1, 0
+      MOV p_print, R1
+      INC R1
+      MOV R1, p_print
+      MOV print_left, R1
+      DEC R1
+      MOV R1, print_left
       JMP print_loop
 
   print_done:
@@ -146,96 +152,98 @@ in_input: |+
 
 in_limit: 100000
 out:
-  out_stdout: |-
-    12359
+  out_stdout: '12359'
   out_code_log: |
-    0000 - 040002 - LD arr_base
-    0003 - 070007 - ST p_write
-    0006 - 040000 - LD zero
-    0009 - 070003 - ST count
-    000C - 1A0000 - IN 0
-    000F - 190A - CMP_IMM 10
-    0011 - 120028 - BEQ read_done
-    0014 - 080007 - ST_IND p_write
-    0017 - 040007 - LD p_write
-    001A - 10 - INC
-    001B - 070007 - ST p_write
-    001E - 040003 - LD count
-    0021 - 10 - INC
-    0022 - 070003 - ST count
-    0025 - 16000C - JMP read_loop
-    0028 - 040003 - LD count
-    002B - 170001 - CMP one
-    002E - 1400D2 - BLT print_done
-    0031 - 1200A6 - BEQ print_loop_init
-    0034 - 040003 - LD count
-    0037 - 11 - DEC
-    0038 - 070004 - ST outer_left
-    003B - 040004 - LD outer_left
-    003E - 170000 - CMP zero
-    0041 - 1200A6 - BEQ print_loop_init
-    0044 - 040002 - LD arr_base
-    0047 - 070008 - ST p_a
-    004A - 040002 - LD arr_base
-    004D - 10 - INC
-    004E - 070009 - ST p_b
-    0051 - 040004 - LD outer_left
-    0054 - 070005 - ST inner_left
-    0057 - 040005 - LD inner_left
-    005A - 170000 - CMP zero
-    005D - 12009C - BEQ outer_step
-    0060 - 050008 - LD_IND p_a
-    0063 - 07000B - ST a_val
-    0066 - 050009 - LD_IND p_b
-    0069 - 07000C - ST b_val
-    006C - 04000B - LD a_val
-    006F - 17000C - CMP b_val
-    0072 - 150078 - BGT do_swap
-    0075 - 160084 - JMP no_swap
-    0078 - 04000C - LD b_val
-    007B - 080008 - ST_IND p_a
-    007E - 04000B - LD a_val
-    0081 - 080009 - ST_IND p_b
-    0084 - 040008 - LD p_a
-    0087 - 10 - INC
-    0088 - 070008 - ST p_a
-    008B - 040009 - LD p_b
-    008E - 10 - INC
-    008F - 070009 - ST p_b
-    0092 - 040005 - LD inner_left
-    0095 - 11 - DEC
-    0096 - 070005 - ST inner_left
-    0099 - 160057 - JMP inner_loop
-    009C - 040004 - LD outer_left
-    009F - 11 - DEC
-    00A0 - 070004 - ST outer_left
-    00A3 - 16003B - JMP outer_loop
-    00A6 - 040002 - LD arr_base
-    00A9 - 07000A - ST p_print
-    00AC - 040003 - LD count
-    00AF - 070006 - ST print_left
-    00B2 - 040006 - LD print_left
-    00B5 - 170000 - CMP zero
-    00B8 - 1200D2 - BEQ print_done
-    00BB - 05000A - LD_IND p_print
-    00BE - 1B0000 - OUT 0
-    00C1 - 04000A - LD p_print
-    00C4 - 10 - INC
-    00C5 - 07000A - ST p_print
-    00C8 - 040006 - LD print_left
-    00CB - 11 - DEC
-    00CC - 070006 - ST print_left
-    00CF - 1600B2 - JMP print_loop
-    00D2 - 01 - HLT
+    0000 - 03030002010000 - MOV arr_base, R1
+    0007 - 03010000030007 - MOV R1, p_write
+    000E - 03090000010000 - MOV zero, R1
+    0015 - 03010000030003 - MOV R1, count
+    001C - 0E060000010000 - IN 0, R1
+    0023 - 0805000A010000 - CMP #NEWLINE, R1
+    002A - 09070064 - BEQ read_done
+    002E - 03030007020000 - MOV p_write, A1
+    0035 - 03010000040000 - MOV R1, (A1)
+    003C - 03030007010000 - MOV p_write, R1
+    0043 - 06010000 - INC R1
+    0047 - 03010000030007 - MOV R1, p_write
+    004E - 03030003010000 - MOV count, R1
+    0055 - 06010000 - INC R1
+    0059 - 03010000030003 - MOV R1, count
+    0060 - 0D07001C - JMP read_loop
+    0064 - 03030003010000 - MOV count, R1
+    006B - 08030001010000 - CMP one, R1
+    0072 - 0B070203 - BLT print_done
+    0076 - 09070198 - BEQ print_loop_init
+    007A - 03030003010000 - MOV count, R1
+    0081 - 07010000 - DEC R1
+    0085 - 03010000030004 - MOV R1, outer_left
+    008C - 03030004010000 - MOV outer_left, R1
+    0093 - 08090000010000 - CMP zero, R1
+    009A - 09070198 - BEQ print_loop_init
+    009E - 03030002010000 - MOV arr_base, R1
+    00A5 - 03010000030008 - MOV R1, p_a
+    00AC - 03030002010000 - MOV arr_base, R1
+    00B3 - 06010000 - INC R1
+    00B7 - 03010000030009 - MOV R1, p_b
+    00BE - 03030004010000 - MOV outer_left, R1
+    00C5 - 03010000030005 - MOV R1, inner_left
+    00CC - 03030005010000 - MOV inner_left, R1
+    00D3 - 08090000010000 - CMP zero, R1
+    00DA - 09070182 - BEQ outer_step
+    00DE - 03030008020000 - MOV p_a, A1
+    00E5 - 03040000010000 - MOV (A1), R1
+    00EC - 0301000003000B - MOV R1, a_val
+    00F3 - 03030009020000 - MOV p_b, A1
+    00FA - 03040000010000 - MOV (A1), R1
+    0101 - 0301000003000C - MOV R1, b_val
+    0108 - 0303000B010000 - MOV a_val, R1
+    010F - 0803000C010000 - CMP b_val, R1
+    0116 - 0C07011E - BGT do_swap
+    011A - 0D070148 - JMP no_swap
+    011E - 0303000C010000 - MOV b_val, R1
+    0125 - 03030008020000 - MOV p_a, A1
+    012C - 03010000040000 - MOV R1, (A1)
+    0133 - 0303000B010000 - MOV a_val, R1
+    013A - 03030009020000 - MOV p_b, A1
+    0141 - 03010000040000 - MOV R1, (A1)
+    0148 - 03030008010000 - MOV p_a, R1
+    014F - 06010000 - INC R1
+    0153 - 03010000030008 - MOV R1, p_a
+    015A - 03030009010000 - MOV p_b, R1
+    0161 - 06010000 - INC R1
+    0165 - 03010000030009 - MOV R1, p_b
+    016C - 03030005010000 - MOV inner_left, R1
+    0173 - 07010000 - DEC R1
+    0177 - 03010000030005 - MOV R1, inner_left
+    017E - 0D0700CC - JMP inner_loop
+    0182 - 03030004010000 - MOV outer_left, R1
+    0189 - 07010000 - DEC R1
+    018D - 03010000030004 - MOV R1, outer_left
+    0194 - 0D07008C - JMP outer_loop
+    0198 - 03030002010000 - MOV arr_base, R1
+    019F - 0301000003000A - MOV R1, p_print
+    01A6 - 03030003010000 - MOV count, R1
+    01AD - 03010000030006 - MOV R1, print_left
+    01B4 - 03030006010000 - MOV print_left, R1
+    01BB - 08090000010000 - CMP zero, R1
+    01C2 - 09070203 - BEQ print_done
+    01C6 - 0303000A020000 - MOV p_print, A1
+    01CD - 03040000010000 - MOV (A1), R1
+    01D4 - 0F010000060000 - OUT R1, 0
+    01DB - 0303000A010000 - MOV p_print, R1
+    01E2 - 06010000 - INC R1
+    01E6 - 0301000003000A - MOV R1, p_print
+    01ED - 03030006010000 - MOV print_left, R1
+    01F4 - 07010000 - DEC R1
+    01F8 - 03010000030006 - MOV R1, print_left
+    01FF - 0D0701B4 - JMP print_loop
+    0203 - 01 - HLT
   out_trace_contains: |
-    IN[0] -> AC=53
-    IN[0] -> AC=50
-    IN[0] -> AC=51
-    IN[0] -> AC=49
-    IN[0] -> AC=57
-    IN[0] -> AC=10
-    OUT[0] <- AC=49
-    OUT[0] <- AC=50
-    OUT[0] <- AC=51
-    OUT[0] <- AC=53
-    OUT[0] <- AC=57
+    IN[0] -> R1=53
+    IN[0] -> R1=50
+    IN[0] -> R1=51
+    IN[0] -> R1=49
+    IN[0] -> R1=57
+    IN[0] -> R1=10
+    OUT[0] <- value=49
+    OUT[0] <- value=50

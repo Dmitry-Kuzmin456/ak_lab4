@@ -9,15 +9,12 @@ in_source: |
   .org 0
   msg:
       .cstr "Hello, world!"
-in_input: |2+
-
+in_input: ''
 in_limit: 100000
 out:
-  out_stdout: |-
-    Hello, world!
+  out_stdout: Hello, world!
   out_code_log: |
-    0000 - 1C0000 - OUT_CSTR msg
-    0003 - 01 - HLT
+    0000 - 10080000 - OUT_CSTR msg
+    0004 - 01 - HLT
   out_trace_contains: |
-    OUT_CSTR[0] <- char=72 addr=0000
     OUT_CSTR[0] <- char=33 addr=000C

@@ -23,226 +23,223 @@ in_source: |
 
   .section text
   _start:
-      LD max_i
-      ST i
-      LD zero
-      ST best
+      MOV max_i, R1
+      MOV R1, i
+      MOV zero, R1
+      MOV R1, best
 
   outer_loop:
-      LD i
-      CMP min_factor
+      MOV i, R1
+      CMP min_factor, R1
       BLT print_result
 
-      LD max_j
-      ST j
+      MOV max_j, R1
+      MOV R1, j
 
   inner_loop:
-      LD j
-      CMP min_factor
+      MOV j, R1
+      CMP min_factor, R1
       BLT dec_i
 
-      LD i
-      MUL j
-      ST product
+      MOV i, R1
+      MUL j, R1
+      MOV R1, product
 
-      LD product
-      CMP best
+      MOV product, R1
+      CMP best, R1
       BGT check_palindrome
       JMP dec_i
 
   check_palindrome:
-      LD product
-      ST candidate
-      LD zero
-      ST reversed
+      MOV product, R1
+      MOV R1, candidate
+      MOV zero, R1
+      MOV R1, reversed
 
   pal_loop:
-      LD candidate
-      CMP zero
+      MOV candidate, R1
+      CMP zero, R1
       BEQ pal_done
 
-      LD candidate
-      MOD ten
-      ST digit
+      MOV candidate, R1
+      MOD ten, R1
+      MOV R1, digit
 
-      LD reversed
-      MUL ten
-      ADD digit
-      ST reversed
+      MOV reversed, R1
+      MUL ten, R1
+      ADD digit, R1
+      MOV R1, reversed
 
-      LD candidate
-      DIV ten
-      ST candidate
+      MOV candidate, R1
+      DIV ten, R1
+      MOV R1, candidate
 
       JMP pal_loop
 
   pal_done:
-      LD reversed
-      CMP product
+      MOV reversed, R1
+      CMP product, R1
       BEQ update_best
       JMP dec_j
 
   update_best:
-      LD product
-      ST best
+      MOV product, R1
+      MOV R1, best
 
   dec_j:
-      LD j
-      SUB eleven
-      ST j
+      MOV j, R1
+      SUB eleven, R1
+      MOV R1, j
       JMP inner_loop
 
   dec_i:
-      LD i
-      DEC
-      ST i
+      MOV i, R1
+      DEC R1
+      MOV R1, i
       JMP outer_loop
 
   print_result:
-      LD best
-      ST print_value
+      MOV best, R1
+      MOV R1, print_value
 
-      LD print_value
-      DIV div100000
-      ADD ascii_zero
-      OUT 0
-      LD print_value
-      MOD div100000
-      ST print_value
+      MOV print_value, R1
+      DIV div100000, R1
+      ADD ascii_zero, R1
+      OUT R1, 0
+      MOV print_value, R1
+      MOD div100000, R1
+      MOV R1, print_value
 
-      LD print_value
-      DIV div10000
-      ADD ascii_zero
-      OUT 0
-      LD print_value
-      MOD div10000
-      ST print_value
+      MOV print_value, R1
+      DIV div10000, R1
+      ADD ascii_zero, R1
+      OUT R1, 0
+      MOV print_value, R1
+      MOD div10000, R1
+      MOV R1, print_value
 
-      LD print_value
-      DIV div1000
-      ADD ascii_zero
-      OUT 0
-      LD print_value
-      MOD div1000
-      ST print_value
+      MOV print_value, R1
+      DIV div1000, R1
+      ADD ascii_zero, R1
+      OUT R1, 0
+      MOV print_value, R1
+      MOD div1000, R1
+      MOV R1, print_value
 
-      LD print_value
-      DIV div100
-      ADD ascii_zero
-      OUT 0
-      LD print_value
-      MOD div100
-      ST print_value
+      MOV print_value, R1
+      DIV div100, R1
+      ADD ascii_zero, R1
+      OUT R1, 0
+      MOV print_value, R1
+      MOD div100, R1
+      MOV R1, print_value
 
-      LD print_value
-      DIV div10
-      ADD ascii_zero
-      OUT 0
-      LD print_value
-      MOD div10
-      ADD ascii_zero
-      OUT 0
+      MOV print_value, R1
+      DIV div10, R1
+      ADD ascii_zero, R1
+      OUT R1, 0
+      MOV print_value, R1
+      MOD div10, R1
+      ADD ascii_zero, R1
+      OUT R1, 0
 
       HLT
-in_input: |2+
-
+in_input: ''
 in_limit: 1000000
 out:
-  out_stdout: |-
-    906609
+  out_stdout: '906609'
   out_code_log: |
-    0000 - 040004 - LD max_i
-    0003 - 07000C - ST i
-    0006 - 040000 - LD zero
-    0009 - 07000F - ST best
-    000C - 04000C - LD i
-    000F - 170003 - CMP min_factor
-    0012 - 140097 - BLT print_result
-    0015 - 040005 - LD max_j
-    0018 - 07000D - ST j
-    001B - 04000D - LD j
-    001E - 170003 - CMP min_factor
-    0021 - 14008D - BLT dec_i
-    0024 - 04000C - LD i
-    0027 - 1D000D - MUL j
-    002A - 07000E - ST product
-    002D - 04000E - LD product
-    0030 - 17000F - CMP best
-    0033 - 150039 - BGT check_palindrome
-    0036 - 16008D - JMP dec_i
-    0039 - 04000E - LD product
-    003C - 070010 - ST candidate
-    003F - 040000 - LD zero
-    0042 - 070011 - ST reversed
-    0045 - 040010 - LD candidate
-    0048 - 170000 - CMP zero
-    004B - 12006F - BEQ pal_done
-    004E - 040010 - LD candidate
-    0051 - 1F0001 - MOD ten
-    0054 - 070012 - ST digit
-    0057 - 040011 - LD reversed
-    005A - 1D0001 - MUL ten
-    005D - 0A0012 - ADD digit
-    0060 - 070011 - ST reversed
-    0063 - 040010 - LD candidate
-    0066 - 1E0001 - DIV ten
-    0069 - 070010 - ST candidate
-    006C - 160045 - JMP pal_loop
-    006F - 040011 - LD reversed
-    0072 - 17000E - CMP product
-    0075 - 12007B - BEQ update_best
-    0078 - 160081 - JMP dec_j
-    007B - 04000E - LD product
-    007E - 07000F - ST best
-    0081 - 04000D - LD j
-    0084 - 0D0002 - SUB eleven
-    0087 - 07000D - ST j
-    008A - 16001B - JMP inner_loop
-    008D - 04000C - LD i
-    0090 - 11 - DEC
-    0091 - 07000C - ST i
-    0094 - 16000C - JMP outer_loop
-    0097 - 04000F - LD best
-    009A - 070013 - ST print_value
-    009D - 040013 - LD print_value
-    00A0 - 1E000A - DIV div100000
-    00A3 - 0A000B - ADD ascii_zero
-    00A6 - 1B0000 - OUT 0
-    00A9 - 040013 - LD print_value
-    00AC - 1F000A - MOD div100000
-    00AF - 070013 - ST print_value
-    00B2 - 040013 - LD print_value
-    00B5 - 1E0009 - DIV div10000
-    00B8 - 0A000B - ADD ascii_zero
-    00BB - 1B0000 - OUT 0
-    00BE - 040013 - LD print_value
-    00C1 - 1F0009 - MOD div10000
-    00C4 - 070013 - ST print_value
-    00C7 - 040013 - LD print_value
-    00CA - 1E0008 - DIV div1000
-    00CD - 0A000B - ADD ascii_zero
-    00D0 - 1B0000 - OUT 0
-    00D3 - 040013 - LD print_value
-    00D6 - 1F0008 - MOD div1000
-    00D9 - 070013 - ST print_value
-    00DC - 040013 - LD print_value
-    00DF - 1E0007 - DIV div100
-    00E2 - 0A000B - ADD ascii_zero
-    00E5 - 1B0000 - OUT 0
-    00E8 - 040013 - LD print_value
-    00EB - 1F0007 - MOD div100
-    00EE - 070013 - ST print_value
-    00F1 - 040013 - LD print_value
-    00F4 - 1E0006 - DIV div10
-    00F7 - 0A000B - ADD ascii_zero
-    00FA - 1B0000 - OUT 0
-    00FD - 040013 - LD print_value
-    0100 - 1F0006 - MOD div10
-    0103 - 0A000B - ADD ascii_zero
-    0106 - 1B0000 - OUT 0
-    0109 - 01 - HLT
+    0000 - 03030004010000 - MOV max_i, R1
+    0007 - 0301000003000C - MOV R1, i
+    000E - 03090000010000 - MOV zero, R1
+    0015 - 0301000003000F - MOV R1, best
+    001C - 0303000C010000 - MOV i, R1
+    0023 - 08030003010000 - CMP min_factor, R1
+    002A - 0B070144 - BLT print_result
+    002E - 03030005010000 - MOV max_j, R1
+    0035 - 0301000003000D - MOV R1, j
+    003C - 0303000D010000 - MOV j, R1
+    0043 - 08030003010000 - CMP min_factor, R1
+    004A - 0B07012E - BLT dec_i
+    004E - 0303000C010000 - MOV i, R1
+    0055 - 1103000D010000 - MUL j, R1
+    005C - 0301000003000E - MOV R1, product
+    0063 - 0303000E010000 - MOV product, R1
+    006A - 0803000F010000 - CMP best, R1
+    0071 - 0C070079 - BGT check_palindrome
+    0075 - 0D07012E - JMP dec_i
+    0079 - 0303000E010000 - MOV product, R1
+    0080 - 03010000030010 - MOV R1, candidate
+    0087 - 03090000010000 - MOV zero, R1
+    008E - 03010000030011 - MOV R1, reversed
+    0095 - 03030010010000 - MOV candidate, R1
+    009C - 08090000010000 - CMP zero, R1
+    00A3 - 090700F1 - BEQ pal_done
+    00A7 - 03030010010000 - MOV candidate, R1
+    00AE - 13030001010000 - MOD ten, R1
+    00B5 - 03010000030012 - MOV R1, digit
+    00BC - 03030011010000 - MOV reversed, R1
+    00C3 - 11030001010000 - MUL ten, R1
+    00CA - 04030012010000 - ADD digit, R1
+    00D1 - 03010000030011 - MOV R1, reversed
+    00D8 - 03030010010000 - MOV candidate, R1
+    00DF - 12030001010000 - DIV ten, R1
+    00E6 - 03010000030010 - MOV R1, candidate
+    00ED - 0D070095 - JMP pal_loop
+    00F1 - 03030011010000 - MOV reversed, R1
+    00F8 - 0803000E010000 - CMP product, R1
+    00FF - 09070107 - BEQ update_best
+    0103 - 0D070115 - JMP dec_j
+    0107 - 0303000E010000 - MOV product, R1
+    010E - 0301000003000F - MOV R1, best
+    0115 - 0303000D010000 - MOV j, R1
+    011C - 05030002010000 - SUB eleven, R1
+    0123 - 0301000003000D - MOV R1, j
+    012A - 0D07003C - JMP inner_loop
+    012E - 0303000C010000 - MOV i, R1
+    0135 - 07010000 - DEC R1
+    0139 - 0301000003000C - MOV R1, i
+    0140 - 0D07001C - JMP outer_loop
+    0144 - 0303000F010000 - MOV best, R1
+    014B - 03010000030013 - MOV R1, print_value
+    0152 - 03030013010000 - MOV print_value, R1
+    0159 - 1203000A010000 - DIV div100000, R1
+    0160 - 0403000B010000 - ADD ascii_zero, R1
+    0167 - 0F010000060000 - OUT R1, 0
+    016E - 03030013010000 - MOV print_value, R1
+    0175 - 1303000A010000 - MOD div100000, R1
+    017C - 03010000030013 - MOV R1, print_value
+    0183 - 03030013010000 - MOV print_value, R1
+    018A - 12030009010000 - DIV div10000, R1
+    0191 - 0403000B010000 - ADD ascii_zero, R1
+    0198 - 0F010000060000 - OUT R1, 0
+    019F - 03030013010000 - MOV print_value, R1
+    01A6 - 13030009010000 - MOD div10000, R1
+    01AD - 03010000030013 - MOV R1, print_value
+    01B4 - 03030013010000 - MOV print_value, R1
+    01BB - 12030008010000 - DIV div1000, R1
+    01C2 - 0403000B010000 - ADD ascii_zero, R1
+    01C9 - 0F010000060000 - OUT R1, 0
+    01D0 - 03030013010000 - MOV print_value, R1
+    01D7 - 13030008010000 - MOD div1000, R1
+    01DE - 03010000030013 - MOV R1, print_value
+    01E5 - 03030013010000 - MOV print_value, R1
+    01EC - 12030007010000 - DIV div100, R1
+    01F3 - 0403000B010000 - ADD ascii_zero, R1
+    01FA - 0F010000060000 - OUT R1, 0
+    0201 - 03030013010000 - MOV print_value, R1
+    0208 - 13030007010000 - MOD div100, R1
+    020F - 03010000030013 - MOV R1, print_value
+    0216 - 03030013010000 - MOV print_value, R1
+    021D - 12030006010000 - DIV div10, R1
+    0224 - 0403000B010000 - ADD ascii_zero, R1
+    022B - 0F010000060000 - OUT R1, 0
+    0232 - 03030013010000 - MOV print_value, R1
+    0239 - 13030006010000 - MOD div10, R1
+    0240 - 0403000B010000 - ADD ascii_zero, R1
+    0247 - 0F010000060000 - OUT R1, 0
+    024E - 01 - HLT
   out_trace_contains: |
-    AC=906609
-    OUT[0] <- AC=57
-    OUT[0] <- AC=48
-    OUT[0] <- AC=54
+    OUT[0] <- value=57
+    OUT[0] <- value=48
+    OUT[0] <- value=54

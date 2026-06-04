@@ -3,21 +3,22 @@ in_source: |
   .org 0
   _start:
   loop:
-      IN 0
-      OUT 0
+      IN 0, R1
+      OUT R1, 0
       JMP loop
 in_input: |
   cat
 in_limit: 100000
 out:
-  out_stdout: |-
-    cat
+  out_stdout: cat
   out_code_log: |
-    0000 - 1A0000 - IN 0
-    0003 - 1B0000 - OUT 0
-    0006 - 160000 - JMP loop
+    0000 - 0E060000010000 - IN 0, R1
+    0007 - 0F010000060000 - OUT R1, 0
+    000E - 0D070000 - JMP loop
   out_trace_contains: |
-    IN[0] -> AC=99
-    OUT[0] <- AC=99
-    IN[0] -> AC=97
-    OUT[0] <- AC=116
+    IN[0] -> R1=99
+    OUT[0] <- value=99
+    IN[0] -> R1=97
+    OUT[0] <- value=97
+    IN[0] -> R1=116
+    OUT[0] <- value=116

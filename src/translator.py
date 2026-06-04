@@ -6,11 +6,15 @@ import struct
 from dataclasses import dataclass
 
 from src.isa import (
-    INSTR_WITH_OPERAND,
+    ADDR_REGISTERS,
+    DATA_REGISTERS,
+    Operand,
+    OperandKind,
+    OPERAND_COUNT,
     OpCode,
+    SPECIAL_REGISTERS,
     encode_instruction,
     instruction_hex,
-    instruction_size,
 )
 
 
@@ -36,29 +40,27 @@ class TranslationResult:
     binary: bytes
     parsed: list[dict]
     labels: dict[str, int]
+    constants: dict[str, int]
 
 
 def _clean(line: str) -> str:
-    return line.split(";", 1)[0].split("#", 1)[0].strip()
+    return line.split(";", 1)[0].strip()
 
 
 def _parse_number(s: str) -> int:
     s = s.strip()
-    if s.startswith("'") and s.endswith("'") and len(s) == 3:
-        return ord(s[1])
+    if s.startswith("'") and s.endswith("'"):
+        text = bytes(s[1:-1], "utf-8").decode("unicode_escape")
+        if len(text) != 1:
+            raise ValueError(f"Bad char literal: {s}")
+        return ord(text)
     return int(s, 0)
 
 
-def _line_size(cmd: str | None) -> int:
-    if cmd is None:
-        return 0
-    return instruction_size(_opcode(cmd))
-
-
 def _opcode(code: str) -> OpCode:
-    if code.upper() == "JUMP":
-        code = "JMP"
-    return OpCode[code.upper()]
+    upper = code.upper()
+    aliases = {"JUMP": "JMP"}
+    return OpCode[aliases.get(upper, upper)]
 
 
 def _replace_macro_params(line: str, bindings: dict[str, str]) -> str:
@@ -105,11 +107,9 @@ def preprocess_source(source: str) -> str:
             if directive == ".ifconst":
                 condition_active = name in constants
             elif directive == ".ifndef":
-                is_defined = name in constants or name in macros
-                condition_active = not is_defined
+                condition_active = name not in constants and name not in macros
             else:
-                is_defined = name in constants or name in macros
-                condition_active = is_defined
+                condition_active = name in constants or name in macros
             conditionals.append(ConditionalFrame(parent_active, condition_active))
             continue
 
@@ -173,6 +173,113 @@ def preprocess_source(source: str) -> str:
         raise ValueError("Unclosed conditional block")
 
     return "\n".join(output)
+
+
+def _split_operands(operand_text: str | None) -> list[str]:
+    if operand_text is None or operand_text.strip() == "":
+        return []
+    return [part.strip() for part in operand_text.split(",") if part.strip()]
+
+
+def _resolve(
+    token: str,
+    labels: dict[str, int],
+    constants: dict[str, int],
+    allow_unresolved: bool,
+) -> int:
+    if token in constants:
+        return constants[token]
+    if token in labels:
+        return labels[token]
+    try:
+        return _parse_number(token)
+    except ValueError:
+        if allow_unresolved:
+            return 0
+        raise ValueError(f"Unknown symbol: {token}") from None
+
+
+def _parse_operand(
+    token: str,
+    op: OpCode,
+    position: int,
+    labels: dict[str, int],
+    constants: dict[str, int],
+    allow_unresolved: bool,
+) -> Operand:
+    upper = token.upper()
+    if upper in DATA_REGISTERS:
+        return Operand(OperandKind.DATA_REG, DATA_REGISTERS[upper], token)
+    if upper in ADDR_REGISTERS:
+        return Operand(OperandKind.ADDR_REG, ADDR_REGISTERS[upper], token)
+    if upper in SPECIAL_REGISTERS:
+        return Operand(OperandKind.SPECIAL_REG, SPECIAL_REGISTERS[upper], token)
+    if token.startswith("(") and token.endswith(")"):
+        reg = token[1:-1].strip().upper()
+        if reg not in ADDR_REGISTERS:
+            raise ValueError(f"Bad indirect operand: {token}")
+        return Operand(OperandKind.INDIRECT, ADDR_REGISTERS[reg], token)
+    if token.startswith("#"):
+        return Operand(
+            OperandKind.IMMEDIATE,
+            _resolve(token[1:], labels, constants, allow_unresolved),
+            token,
+        )
+    if op in {OpCode.BEQ, OpCode.BNE, OpCode.BLT, OpCode.BGT, OpCode.JMP}:
+        return Operand(
+            OperandKind.CODE_ADDR,
+            _resolve(token, labels, constants, allow_unresolved),
+            token,
+        )
+    if (op == OpCode.IN and position == 0) or (op == OpCode.OUT and position == 1):
+        return Operand(
+            OperandKind.PORT,
+            _resolve(token, labels, constants, allow_unresolved),
+            token,
+        )
+    if op == OpCode.OUT_CSTR:
+        return Operand(
+            OperandKind.DATA_ADDR,
+            _resolve(token, labels, constants, allow_unresolved),
+            token,
+        )
+    return Operand(
+        OperandKind.DIRECT,
+        _resolve(token, labels, constants, allow_unresolved),
+        token,
+    )
+
+
+def _parse_operands(
+    mnemonic: str,
+    operand_text: str | None,
+    labels: dict[str, int],
+    constants: dict[str, int],
+    allow_unresolved: bool = False,
+) -> list[Operand]:
+    op = _opcode(mnemonic)
+    return [
+        _parse_operand(token, op, pos, labels, constants, allow_unresolved)
+        for pos, token in enumerate(_split_operands(operand_text))
+    ]
+
+
+def _validate_operands(op: OpCode, operands: list[Operand]) -> None:
+    expected = OPERAND_COUNT[op]
+    if expected is None:
+        if op == OpCode.POLY and len(operands) < 3:
+            raise ValueError("POLY expects at least 3 operands")
+    elif len(operands) != expected:
+        raise ValueError(f"{op.name} expects {expected} operands, got {len(operands)}")
+
+
+def _line_size(mnemonic: str | None, operand_text: str | None) -> int:
+    if mnemonic is None:
+        return 0
+    op = _opcode(mnemonic)
+    operands = _parse_operands(mnemonic, operand_text, {}, {}, allow_unresolved=True)
+    _validate_operands(op, operands)
+    return len(encode_instruction(op, operands))
 
 
 def parse_source(source: str):
@@ -291,96 +398,86 @@ def parse_source(source: str):
             )
             data_addr += 1
             continue
-        
-        # секция text
+
         parts = line.split(maxsplit=1)
         mnemonic = parts[0]
-        operand = parts[1].strip() if len(parts) > 1 else None
-        if operand in constants:
-            operand = str(constants[operand])
+        operand_text = parts[1].strip() if len(parts) > 1 else None
         parsed.append(
             {
                 "section": section,
                 "addr": text_addr,
                 "label": label,
                 "mnemonic": mnemonic,
-                "operand": operand,
+                "operand": operand_text,
                 "value": None,
             }
         )
-        text_addr += _line_size(mnemonic)
+        text_addr += _line_size(mnemonic, operand_text)
 
     if entry is None:
         raise ValueError("Missing required _start label in .section text")
 
-    return parsed, labels, entry
+    return parsed, labels, entry, constants
 
 
-def assemble_parsed(parsed, labels, entry) -> bytes:
+def assemble_parsed(parsed, labels, entry, constants) -> bytes:
     cmd = [0] * 65536
-    data = {}
+    data = [0] * 65536
     max_cmd = 0
+    max_data = -1
 
     for item in parsed:
         if item["section"] == "data":
             if item["value"] is not None:
                 data[item["addr"]] = item["value"]
+                max_data = max(max_data, item["addr"])
             continue
 
         if item["mnemonic"] is None:
             continue
 
         op = _opcode(item["mnemonic"])
-        operand = None
-        if op in INSTR_WITH_OPERAND:
-            if item["operand"] is None:
-                raise ValueError(f"Missing operand for {item['mnemonic']}")
-            op_token = item["operand"]
-            operand = labels[op_token] if op_token in labels else _parse_number(op_token)
-        encoded = encode_instruction(op, operand)
+        operands = _parse_operands(item["mnemonic"], item["operand"], labels, constants)
+        _validate_operands(op, operands)
+        encoded = encode_instruction(op, operands)
         cmd[item["addr"] : item["addr"] + len(encoded)] = encoded
-        end = item["addr"] + len(encoded) - 1
-        max_cmd = max(max_cmd, end)
+        max_cmd = max(max_cmd, item["addr"] + len(encoded) - 1)
 
     cmd_blob = bytes(cmd[: max_cmd + 1] if max_cmd > 0 else [0])
+    data_blob = data[: max_data + 1] if max_data >= 0 else []
     out = bytearray()
     out.extend(b"AK4B")
     out.extend(struct.pack(">H", entry))
     out.extend(struct.pack(">H", len(cmd_blob)))
+    out.extend(struct.pack(">H", len(data_blob)))
     out.extend(cmd_blob)
-    out.extend(struct.pack(">H", len(data)))
-    for addr in sorted(data.keys()):
-        out.extend(struct.pack(">Hi", addr, data[addr]))
+    for value in data_blob:
+        out.extend(struct.pack(">i", value))
     return bytes(out)
 
 
-def make_debug(parsed, labels) -> str:
+def make_debug(parsed, labels, constants) -> str:
     lines = []
     for item in parsed:
         if item["section"] != "text" or item["mnemonic"] is None:
             continue
         op = _opcode(item["mnemonic"])
-        operand = None
-        if op in INSTR_WITH_OPERAND:
-            if item["operand"] is not None:
-                token = item["operand"]
-                operand = labels[token] if token in labels else _parse_number(token)
-            mnem = f"{item['mnemonic']} {item['operand']}"
-        else:
-            mnem = item["mnemonic"]
-        hexc = instruction_hex(op, operand)
-        lines.append(f"{item['addr']:04X} - {hexc} - {mnem}")
+        operands = _parse_operands(item["mnemonic"], item["operand"], labels, constants)
+        mnem = item["mnemonic"] + (f" {item['operand']}" if item["operand"] else "")
+        lines.append(f"{item['addr']:04X} - {instruction_hex(op, operands)} - {mnem}")
     return "\n".join(lines) + ("\n" if lines else "")
 
 
 def translate(source: str) -> TranslationResult:
-    parsed, labels, entry = parse_source(source)
-    return TranslationResult(assemble_parsed(parsed, labels, entry), parsed, labels)
+    parsed, labels, entry, constants = parse_source(source)
+    return TranslationResult(
+        assemble_parsed(parsed, labels, entry, constants), parsed, labels, constants
+    )
 
 
 def write_debug(translation: TranslationResult, path: str) -> None:
     with open(path, "w", encoding="utf-8") as f:
-        f.write(make_debug(translation.parsed, translation.labels))
+        f.write(make_debug(translation.parsed, translation.labels, translation.constants))
 
 
 def write_output(source: str, output_path: str) -> bytes:
