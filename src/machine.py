@@ -24,8 +24,8 @@ class DataPath:
         self.command_memory: list[int] = [0] * 65536
         self.data_memory: list[int] = [0] * 65536
 
-        self.r: list[int] = [0, 0, 0, 0]  # R1-R3, index 0 is unused
-        self.a: list[int] = [0, 0, 0, 0]  # A1-A3, index 0 is unused
+        self.r: list[int] = [0, 0, 0, 0]  # индекс 0 не используется
+        self.a: list[int] = [0, 0, 0, 0]  # индекс 0 не используется
         self.ip: int = 0
         self.cr: int = 0
         self.ps: dict[str, bool] = {
@@ -44,9 +44,8 @@ class DataPath:
         self.op1_payload: int = 0
         self.op0_desc: Operand = Operand(OperandKind.NONE, 0)
         self.op1_desc: Operand = Operand(OperandKind.NONE, 0)
-        # EA0/EA1 from the scheme; a list keeps the same path for one/two operands.
+        # EA0/EA1
         self.operand_addresses: list[int | None] = []
-        # Decoder/OP-mux bookkeeping for the simulator, not separate datapath registers.
         self.operand_prepare_index: int = 0
 
         self.input_buffer: list[int] = []

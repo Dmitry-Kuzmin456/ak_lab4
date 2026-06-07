@@ -113,9 +113,7 @@ def test_translator_writes_default_debug_log(
         _load_golden(GOLDEN_ROOT / "hello.yml")["in_source"], encoding="utf-8"
     )
 
-    monkeypatch.setattr(
-        sys, "argv", ["translator", str(source_path), str(binary_path)]
-    )
+    monkeypatch.setattr(sys, "argv", ["translator", str(source_path), str(binary_path)])
     translator_main()
 
     debug_path = tmp_path / "hello.bin.log"

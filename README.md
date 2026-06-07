@@ -571,18 +571,3 @@ Golden tests организованы в формате `tests/golden/<case>.yml
 | `features_preprocessor` | [tests/golden/features_preprocessor.yml](tests/golden/features_preprocessor.yml) | Константы, макросы, `.ifdef/.ifndef/.ifconst`, результат препроцессинга. |
 | `features_addressing` | [tests/golden/features_addressing.yml](tests/golden/features_addressing.yml) | `.org`, секции, `(A)+`, `-(A)` и изменение адресного регистра. |
 | `features_cisc_registers` | [tests/golden/features_cisc_registers.yml](tests/golden/features_cisc_registers.yml) | `CSTR`, `OUT_CSTR`, `ZERO`, `OR`, `AND`, `NEG`, работа `R2/R3` и `A2/A3`. |
-
-## Соответствие варианту
-
-| Пункт варианта | Реализация |
-| --- | --- |
-| `asm` | Ассемблер с метками, секциями, `.org`, константами, макросами и условной компиляцией. |
-| `cisc` | Переменная длина инструкций, memory operands, special register `ZERO`, indirect/immediate/direct addressing, сложные команды `OUT_CSTR` и `CSTR`. |
-| `harv` | Раздельные память команд и память данных. |
-| `mc` | Отдельная память микрокода, `uPC`, исполнение набора микросигналов. |
-| `tick` | Модель выполняется по тактам и пишет trace каждого такта. |
-| `binary` | Бинарный файл `AK4B` и текстовый debug dump. |
-| `stream` | Ввод и вывод через потоковые буферы символов. |
-| `port` | Инструкции `IN port, dst`, `OUT src, port`; поддержан порт `0`. |
-| `cstr` | Null-terminated строки в памяти данных, `.cstr`, `OUT_CSTR`, `CSTR`. |
-| `prob1` | Реализован Euler #4 на asm, результат выводится через output stream. |
