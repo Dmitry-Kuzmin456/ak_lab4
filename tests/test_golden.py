@@ -34,12 +34,6 @@ def _load_golden(path: Path) -> dict:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
-def _assert_contains(actual: str, expected: str) -> None:
-    for line in expected.splitlines():
-        if line.strip():
-            assert line in actual
-
-
 GOLDEN_CASES = sorted(GOLDEN_ROOT.glob("*.yml"))
 
 
@@ -49,8 +43,10 @@ def test_golden_cases(tmp_path: Path, golden_path: Path) -> None:
     source = golden["in_source"]
     input_text = golden.get("in_input", "").removesuffix("\n")
     output_expected = golden["out"]["out_stdout"]
+    preprocessed_expected = golden["out"].get("out_preprocessed")
+    binary_expected = golden["out"]["out_binary_hex"]
     code_log_expected = golden["out"]["out_code_log"]
-    trace_contains = golden["out"].get("out_trace_contains", "")
+    trace_expected = golden["out"]["out_trace"]
     limit = golden.get("in_limit", 100000)
 
     input_path = tmp_path / f"{golden_path.stem}.input"
@@ -61,7 +57,10 @@ def test_golden_cases(tmp_path: Path, golden_path: Path) -> None:
     binary = write_output(source, str(binary_path))
     input_path.write_text(input_text, encoding="utf-8")
 
+    if preprocessed_expected is not None:
+        assert preprocess_source(source) == preprocessed_expected
     assert binary[:4] == b"AK4B"
+    assert binary.hex().upper() == binary_expected
 
     output = machine.run(
         str(binary_path),
@@ -72,7 +71,11 @@ def test_golden_cases(tmp_path: Path, golden_path: Path) -> None:
 
     assert output == output_expected
     assert debug_path.read_text(encoding="utf-8") == code_log_expected
-    _assert_contains(trace_path.read_text(encoding="utf-8"), trace_contains)
+    trace_actual = trace_path.read_text(encoding="utf-8")
+    if golden_path.stem == "prob1":
+        assert trace_actual.startswith(trace_expected)
+    else:
+        assert trace_actual == trace_expected
 
 
 def test_start_label_is_required() -> None:

@@ -181,6 +181,31 @@ def _split_operands(operand_text: str | None) -> list[str]:
     return [part.strip() for part in operand_text.split(",") if part.strip()]
 
 
+def _parse_string_literal(token: str) -> str:
+    token = token.strip()
+    if not (len(token) >= 2 and token[0] == '"' and token[-1] == '"'):
+        raise ValueError(f"Bad string literal: {token}")
+    return bytes(token[1:-1], "utf-8").decode("unicode_escape")
+
+
+def _parse_cstr_operands(operand_text: str | None) -> list[Operand]:
+    if operand_text is None:
+        raise ValueError('CSTR expects address register and string: CSTR A1, "text"')
+    parts = operand_text.split(",", 1)
+    if len(parts) != 2:
+        raise ValueError('CSTR expects address register and string: CSTR A1, "text"')
+    reg = parts[0].strip().upper()
+    if reg not in ADDR_REGISTERS:
+        raise ValueError(
+            f"CSTR destination must be address register: {parts[0].strip()}"
+        )
+    text = _parse_string_literal(parts[1])
+    return [
+        Operand(OperandKind.ADDR_REG, ADDR_REGISTERS[reg], parts[0].strip()),
+        *[Operand(OperandKind.IMMEDIATE, ord(ch), repr(ch)) for ch in text],
+    ]
+
+
 def _resolve(
     token: str,
     labels: dict[str, int],
@@ -214,6 +239,16 @@ def _parse_operand(
         return Operand(OperandKind.ADDR_REG, ADDR_REGISTERS[upper], token)
     if upper in SPECIAL_REGISTERS:
         return Operand(OperandKind.SPECIAL_REG, SPECIAL_REGISTERS[upper], token)
+    if token.startswith("(") and token.endswith(")+"):
+        reg = token[1:-2].strip().upper()
+        if reg not in ADDR_REGISTERS:
+            raise ValueError(f"Bad post-increment operand: {token}")
+        return Operand(OperandKind.POST_INC, ADDR_REGISTERS[reg], token)
+    if token.startswith("-(") and token.endswith(")"):
+        reg = token[2:-1].strip().upper()
+        if reg not in ADDR_REGISTERS:
+            raise ValueError(f"Bad pre-decrement operand: {token}")
+        return Operand(OperandKind.PRE_DEC, ADDR_REGISTERS[reg], token)
     if token.startswith("(") and token.endswith(")"):
         reg = token[1:-1].strip().upper()
         if reg not in ADDR_REGISTERS:
@@ -258,6 +293,8 @@ def _parse_operands(
     allow_unresolved: bool = False,
 ) -> list[Operand]:
     op = _opcode(mnemonic)
+    if op == OpCode.CSTR:
+        return _parse_cstr_operands(operand_text)
     return [
         _parse_operand(token, op, pos, labels, constants, allow_unresolved)
         for pos, token in enumerate(_split_operands(operand_text))
@@ -267,8 +304,10 @@ def _parse_operands(
 def _validate_operands(op: OpCode, operands: list[Operand]) -> None:
     expected = OPERAND_COUNT[op]
     if expected is None:
-        if op == OpCode.POLY and len(operands) < 3:
-            raise ValueError("POLY expects at least 3 operands")
+        if op != OpCode.CSTR:
+            raise ValueError(f"Bad operand count for opcode: {op}")
+        if not operands or operands[0].kind != OperandKind.ADDR_REG:
+            raise ValueError("CSTR expects address register and string")
     elif len(operands) != expected:
         raise ValueError(f"{op.name} expects {expected} operands, got {len(operands)}")
 
@@ -352,7 +391,7 @@ def parse_source(source: str):
                 s = parts[1].strip()
                 if not (len(s) >= 2 and s[0] == '"' and s[-1] == '"'):
                     raise ValueError(f"Bad .cstr literal: {line}")
-                text = bytes(s[1:-1], "utf-8").decode("unicode_escape")
+                text = _parse_string_literal(s)
                 for ch in text:
                     parsed.append(
                         {
@@ -477,7 +516,9 @@ def translate(source: str) -> TranslationResult:
 
 def write_debug(translation: TranslationResult, path: str) -> None:
     with open(path, "w", encoding="utf-8") as f:
-        f.write(make_debug(translation.parsed, translation.labels, translation.constants))
+        f.write(
+            make_debug(translation.parsed, translation.labels, translation.constants)
+        )
 
 
 def write_output(source: str, output_path: str) -> bytes:

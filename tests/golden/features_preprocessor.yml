@@ -1,0 +1,93 @@
+in_source: |
+  .const USE_TEXT 1
+  .const EMIT_EXTRA 1
+  
+  .macro EMIT value
+      MOV value, R1
+      OUT R1, 0
+  .endmacro
+  
+  .macro PRINT label
+      OUT_CSTR label
+  .endmacro
+  
+  .section text
+  .org 0
+  _start:
+  .ifdef USE_TEXT
+      PRINT msg
+  .else
+      EMIT #'?'
+  .endif
+  .ifndef DISABLED_FEATURE
+      EMIT #'N'
+  .endif
+  .ifconst EMIT_EXTRA
+      EMIT #'C'
+  .else
+      EMIT #'?'
+  .endif
+      HLT
+  
+  .section data
+  .org 0
+  msg:
+      .cstr "M"
+in_input: ''
+in_limit: 100000
+out:
+  out_stdout: MNC
+  out_preprocessed: |-
+    .const USE_TEXT 1
+    .const EMIT_EXTRA 1
+    .section text
+    .org 0
+    _start:
+    OUT_CSTR msg
+    MOV #'N', R1
+    OUT R1, 0
+    MOV #'C', R1
+    OUT R1, 0
+    HLT
+    .section data
+    .org 0
+    msg:
+    .cstr "M"
+  out_binary_hex: 414B34420000001D0002108000000351004E00010F16000100000351004300010F1600010000010000004D00000000
+  out_code_log: |
+    0000 - 10800000 - OUT_CSTR msg
+    0004 - 0351004E0001 - MOV #'N', R1
+    000A - 0F1600010000 - OUT R1, 0
+    0010 - 035100430001 - MOV #'C', R1
+    0016 - 0F1600010000 - OUT R1, 0
+    001C - 01 - HLT
+  out_trace: |
+    tick=0 mode=scalar uPC=001 IP=0002 CR=10 R1=0 R2=0 R3=0 A1=0000 A2=0000 A3=0000 PS=N0Z0V0C0
+    tick=1 mode=scalar uPC=003 IP=0004 CR=10 R1=0 R2=0 R3=0 A1=0000 A2=0000 A3=0000 PS=N0Z0V0C0
+    tick=2 mode=scalar uPC=059 IP=0004 CR=10 R1=0 R2=0 R3=0 A1=0000 A2=0000 A3=0000 PS=N0Z0V0C0 EA[0] <- 0000
+    tick=3 mode=scalar uPC=060 IP=0004 CR=10 R1=0 R2=0 R3=0 A1=0000 A2=0000 A3=0000 PS=N0Z0V0C0
+    tick=4 mode=scalar uPC=061 IP=0004 CR=10 R1=0 R2=0 R3=0 A1=0000 A2=0000 A3=0000 PS=N0Z0V0C0 OUT_CSTR[0] <- char=77 addr=0000
+    tick=5 mode=scalar uPC=062 IP=0004 CR=10 R1=0 R2=0 R3=0 A1=0000 A2=0000 A3=0000 PS=N0Z0V0C0
+    tick=6 mode=scalar uPC=063 IP=0004 CR=10 R1=0 R2=0 R3=0 A1=0000 A2=0000 A3=0000 PS=N0Z0V0C0
+    tick=7 mode=scalar uPC=059 IP=0004 CR=10 R1=0 R2=0 R3=0 A1=0000 A2=0000 A3=0000 PS=N0Z0V0C0
+    tick=8 mode=scalar uPC=000 IP=0004 CR=10 R1=0 R2=0 R3=0 A1=0000 A2=0000 A3=0000 PS=N0Z0V0C0
+    tick=9 mode=scalar uPC=001 IP=0006 CR=03 R1=0 R2=0 R3=0 A1=0000 A2=0000 A3=0000 PS=N0Z0V0C0
+    tick=10 mode=scalar uPC=002 IP=0008 CR=03 R1=0 R2=0 R3=0 A1=0000 A2=0000 A3=0000 PS=N0Z0V0C0
+    tick=11 mode=scalar uPC=019 IP=000A CR=03 R1=0 R2=0 R3=0 A1=0000 A2=0000 A3=0000 PS=N0Z0V0C0
+    tick=12 mode=scalar uPC=020 IP=000A CR=03 R1=0 R2=0 R3=0 A1=0000 A2=0000 A3=0000 PS=N0Z0V0C0
+    tick=13 mode=scalar uPC=000 IP=000A CR=03 R1=78 R2=0 R3=0 A1=0000 A2=0000 A3=0000 PS=N0Z0V0C0
+    tick=14 mode=scalar uPC=001 IP=000C CR=0F R1=78 R2=0 R3=0 A1=0000 A2=0000 A3=0000 PS=N0Z0V0C0
+    tick=15 mode=scalar uPC=002 IP=000E CR=0F R1=78 R2=0 R3=0 A1=0000 A2=0000 A3=0000 PS=N0Z0V0C0
+    tick=16 mode=scalar uPC=058 IP=0010 CR=0F R1=78 R2=0 R3=0 A1=0000 A2=0000 A3=0000 PS=N0Z0V0C0
+    tick=17 mode=scalar uPC=000 IP=0010 CR=0F R1=78 R2=0 R3=0 A1=0000 A2=0000 A3=0000 PS=N0Z0V0C0 OUT[0] <- value=78
+    tick=18 mode=scalar uPC=001 IP=0012 CR=03 R1=78 R2=0 R3=0 A1=0000 A2=0000 A3=0000 PS=N0Z0V0C0
+    tick=19 mode=scalar uPC=002 IP=0014 CR=03 R1=78 R2=0 R3=0 A1=0000 A2=0000 A3=0000 PS=N0Z0V0C0
+    tick=20 mode=scalar uPC=019 IP=0016 CR=03 R1=78 R2=0 R3=0 A1=0000 A2=0000 A3=0000 PS=N0Z0V0C0
+    tick=21 mode=scalar uPC=020 IP=0016 CR=03 R1=78 R2=0 R3=0 A1=0000 A2=0000 A3=0000 PS=N0Z0V0C0
+    tick=22 mode=scalar uPC=000 IP=0016 CR=03 R1=67 R2=0 R3=0 A1=0000 A2=0000 A3=0000 PS=N0Z0V0C0
+    tick=23 mode=scalar uPC=001 IP=0018 CR=0F R1=67 R2=0 R3=0 A1=0000 A2=0000 A3=0000 PS=N0Z0V0C0
+    tick=24 mode=scalar uPC=002 IP=001A CR=0F R1=67 R2=0 R3=0 A1=0000 A2=0000 A3=0000 PS=N0Z0V0C0
+    tick=25 mode=scalar uPC=058 IP=001C CR=0F R1=67 R2=0 R3=0 A1=0000 A2=0000 A3=0000 PS=N0Z0V0C0
+    tick=26 mode=scalar uPC=000 IP=001C CR=0F R1=67 R2=0 R3=0 A1=0000 A2=0000 A3=0000 PS=N0Z0V0C0 OUT[0] <- value=67
+    tick=27 mode=scalar uPC=017 IP=001D CR=01 R1=67 R2=0 R3=0 A1=0000 A2=0000 A3=0000 PS=N0Z0V0C0
+    tick=28 mode=scalar uPC=017 IP=001D CR=01 R1=67 R2=0 R3=0 A1=0000 A2=0000 A3=0000 PS=N0Z0V0C0

@@ -1,20 +1,8 @@
 import argparse
 import struct
 
-from src.isa import (
-    EXEC_MAP,
-    AluOp,
-    DecodedInstruction,
-    McDst,
-    McSrc,
-    MicroOp,
-    MicroProgramStart,
-    Move,
-    Operand,
-    OperandKind,
-    OpCode,
-    decode_instruction,
-)
+# ruff: noqa: F403, F405
+from src.isa import *
 from src.microcode_memory import microcode_memory
 
 
@@ -36,8 +24,8 @@ class DataPath:
         self.command_memory: list[int] = [0] * 65536
         self.data_memory: list[int] = [0] * 65536
 
-        self.r: list[int] = [0, 0, 0]  # R1-R3
-        self.a: list[int] = [0, 0, 0]  # A1-A3
+        self.r: list[int] = [0, 0, 0, 0]  # R1-R3, index 0 is unused
+        self.a: list[int] = [0, 0, 0, 0]  # A1-A3, index 0 is unused
         self.ip: int = 0
         self.cr: int = 0
         self.ps: dict[str, bool] = {
@@ -47,13 +35,19 @@ class DataPath:
             "C": False,
         }
 
-        self.dst_latch: int = 0
-        self.src_latch: int = 0
-        self.alu_latch: int = 0
-        self.src_desc: Operand | None = None
-        self.dst_desc: Operand | None = None
-        self.selected_operand: Operand | None = None
+        self.shadow_r0: int = 0
+        self.shadow_r1: int = 0
+        self.shadow_r2: int = 0
+        self.shadow_a0: int = 0
+        self.operand_kinds: int = 0
+        self.op0_payload: int = 0
+        self.op1_payload: int = 0
+        self.op0_desc: Operand = Operand(OperandKind.NONE, 0)
+        self.op1_desc: Operand = Operand(OperandKind.NONE, 0)
+        # EA0/EA1 from the scheme; a list keeps the same path for one/two operands.
         self.operand_addresses: list[int | None] = []
+        # Decoder/OP-mux bookkeeping for the simulator, not separate datapath registers.
+        self.operand_prepare_index: int = 0
 
         self.input_buffer: list[int] = []
         self.output_buffer: list[int] = []
@@ -64,6 +58,34 @@ class DataPath:
     def set_data_memory(self, data_memory: list[int]) -> None:
         self.data_memory = data_memory
 
+    def current_op(self) -> OpCode:
+        return OpCode(self.cr)
+
+    def operand(self, index: int) -> Operand:
+        if index == 0:
+            return self.op0_desc
+        if index == 1:
+            return self.op1_desc
+        raise ValueError(f"Bad operand index: {index}")
+
+    def instruction_operand_count(self) -> int:
+        count = OPERAND_COUNT[self.current_op()]
+        if count is None:
+            return 0
+        return count
+
+    def dst_index(self) -> int:
+        return 1 if self.instruction_operand_count() > 1 else 0
+
+    def reset_decode_latches(self) -> None:
+        self.operand_kinds = 0
+        self.op0_payload = 0
+        self.op1_payload = 0
+        self.op0_desc = Operand(OperandKind.NONE, 0)
+        self.op1_desc = Operand(OperandKind.NONE, 0)
+        self.operand_addresses = []
+        self.operand_prepare_index = 0
+
     def read_operand(self, operand: Operand, address: int | None = None) -> int:
         if operand.kind == OperandKind.DATA_REG:
             return self.r[operand.value]
@@ -72,6 +94,10 @@ class DataPath:
         if operand.kind == OperandKind.DIRECT:
             return self.data_memory[address if address is not None else operand.value]
         if operand.kind == OperandKind.INDIRECT:
+            return self.data_memory[
+                address if address is not None else self.a[operand.value]
+            ]
+        if operand.kind in {OperandKind.POST_INC, OperandKind.PRE_DEC}:
             return self.data_memory[
                 address if address is not None else self.a[operand.value]
             ]
@@ -96,6 +122,8 @@ class DataPath:
             return self.a[operand.value]
         if operand.kind == OperandKind.INDIRECT:
             return self.a[operand.value]
+        if operand.kind in {OperandKind.POST_INC, OperandKind.PRE_DEC}:
+            return self.a[operand.value]
         if operand.kind == OperandKind.IMMEDIATE:
             return operand.value
         raise ValueError(f"Cannot use operand as address: {operand}")
@@ -118,19 +146,14 @@ class DataPath:
                 address if address is not None else self.a[operand.value]
             ] = value
             return
+        if operand.kind in {OperandKind.POST_INC, OperandKind.PRE_DEC}:
+            self.data_memory[
+                address if address is not None else self.a[operand.value]
+            ] = value
+            return
         if operand.kind == OperandKind.SPECIAL_REG:
             return
         raise ValueError(f"Cannot write operand: {operand}")
-
-    def read_selected_operand(self) -> int:
-        if self.selected_operand is None:
-            raise ValueError("No selected operand")
-        return self.read_operand(self.selected_operand)
-
-    def write_selected_operand(self, value: int) -> None:
-        if self.selected_operand is None:
-            raise ValueError("No selected operand")
-        self.write_operand(self.selected_operand, value)
 
     def execute_alu(
         self,
@@ -141,12 +164,12 @@ class DataPath:
     ) -> int:
         if left is None:
             left = (
-                self.dst_latch
+                self.shadow_r1
                 if operation not in {AluOp.PASS, AluOp.NONE}
-                else self.src_latch
+                else self.shadow_r0
             )
         if right is None:
-            right = self.src_latch
+            right = self.shadow_r0
 
         if operation in {AluOp.NONE, AluOp.PASS}:
             result_raw = left
@@ -157,6 +180,11 @@ class DataPath:
             op_name = "add"
         elif operation == AluOp.DEC:
             right = 1
+            result_raw = left - right
+            op_name = "sub"
+        elif operation == AluOp.NEG:
+            right = left
+            left = 0
             result_raw = left - right
             op_name = "sub"
         else:
@@ -179,8 +207,14 @@ class DataPath:
                     raise ZeroDivisionError("MOD by zero")
                 result_raw = left % right
                 op_name = ""
+            elif operation == AluOp.OR:
+                result_raw = left | right
+                op_name = ""
+            elif operation == AluOp.AND:
+                result_raw = left & right
+                op_name = ""
             else:
-                result_raw = self.src_latch
+                result_raw = self.shadow_r0
                 op_name = ""
 
         result = _to_signed32(result_raw)
@@ -201,7 +235,6 @@ class DataPath:
             )
             self.ps["N"] = result < 0
             self.ps["Z"] = result == 0
-        self.alu_latch = result
         return result
 
 
@@ -212,70 +245,45 @@ class ControlUnit:
         self.upc = 0
         self.halted = False
         self.last_io_event = ""
-        self.current_instruction: DecodedInstruction | None = None
-        self.operand_prepare_index = 0
-        self.cstr_addr: int | None = None
-        self.poly_x = 0
-        self.poly_index = 0
-        self.poly_result_raw = 0
-
-    def _operand(self, index: int) -> Operand:
-        if self.current_instruction is None:
-            raise ValueError("Instruction is not decoded")
-        return self.current_instruction.operands[index]
-
-    def _dst_operand(self) -> Operand:
-        if self.current_instruction is None:
-            raise ValueError("Instruction is not decoded")
-        return self.current_instruction.operands[self._dst_index()]
-
-    def _dst_index(self) -> int:
-        if self.current_instruction is None:
-            raise ValueError("Instruction is not decoded")
-        return 1 if len(self.current_instruction.operands) > 1 else 0
-
-    def _prepared_address(self, index: int) -> int | None:
-        return self.datapath.operand_addresses[index]
 
     def _read_operand(self, index: int) -> int:
-        return self.datapath.read_operand(
-            self._operand(index), self._prepared_address(index)
+        dp = self.datapath
+        address = (
+            dp.operand_addresses[index] if index < len(dp.operand_addresses) else None
         )
+        return dp.read_operand(dp.operand(index), address)
 
     def _write_operand(self, index: int, value: int) -> None:
-        self.datapath.write_operand(
-            self._operand(index), value, self._prepared_address(index)
-        )
+        dp = self.datapath
+        dp.write_operand(dp.operand(index), value, dp.operand_addresses[index])
 
-    def _read_dst(self) -> int:
-        return self._read_operand(self._dst_index())
+    def _dst_is_register(self) -> bool:
+        return self.datapath.operand(self.datapath.dst_index()).kind in {
+            OperandKind.DATA_REG,
+            OperandKind.ADDR_REG,
+            OperandKind.SPECIAL_REG,
+        }
 
-    def _write_dst(self, value: int) -> None:
-        self._write_operand(self._dst_index(), value)
-
-    def _read_micro_source(self, source: McSrc) -> int:
-        if source == McSrc.SRC_LATCH:
-            return self.datapath.src_latch
-        if source == McSrc.DST_LATCH:
-            return self.datapath.dst_latch
-        if source == McSrc.ZERO:
-            return 0
-        return 0
-
-    def _write_micro_destination(self, destination: McDst, value: int) -> None:
-        if destination == McDst.ALU_LATCH:
-            self.datapath.alu_latch = value
+    def _store_dst_if_memory(self) -> None:
+        if self._dst_is_register():
+            self.upc = 0
+            return
+        self.upc = MicroProgramStart.STORE_DST
 
     @staticmethod
     def _format_operand(operand: Operand) -> str:
         if operand.kind == OperandKind.DATA_REG:
-            return f"R{operand.value + 1}"
+            return f"R{operand.value}"
         if operand.kind == OperandKind.ADDR_REG:
-            return f"A{operand.value + 1}"
+            return f"A{operand.value}"
         if operand.kind == OperandKind.DIRECT:
             return f"mem[{operand.value:04X}]"
         if operand.kind == OperandKind.INDIRECT:
-            return f"(A{operand.value + 1})"
+            return f"(A{operand.value})"
+        if operand.kind == OperandKind.POST_INC:
+            return f"(A{operand.value})+"
+        if operand.kind == OperandKind.PRE_DEC:
+            return f"-(A{operand.value})"
         if operand.kind == OperandKind.SPECIAL_REG:
             return "ZERO"
         return "dst"
@@ -285,99 +293,309 @@ class ControlUnit:
         return operand.kind in {
             OperandKind.DIRECT,
             OperandKind.INDIRECT,
+            OperandKind.POST_INC,
+            OperandKind.PRE_DEC,
             OperandKind.DATA_ADDR,
             OperandKind.CODE_ADDR,
         }
 
     def _prepare_or_dispatch(self) -> None:
-        if self.current_instruction is None:
-            raise ValueError("Cannot dispatch without instruction")
-        operands = self.current_instruction.operands
-        while self.operand_prepare_index < len(operands):
-            operand = operands[self.operand_prepare_index]
+        dp = self.datapath
+        operand_count = dp.instruction_operand_count()
+        if len(dp.operand_addresses) != operand_count:
+            dp.operand_addresses = [None] * operand_count
+        while dp.operand_prepare_index < operand_count:
+            operand = dp.operand(dp.operand_prepare_index)
             if self._needs_address_prepare(operand):
-                self.upc = MicroProgramStart.PREPARE_OPERAND
+                self._prepare_by_kind()
                 return
-            self.operand_prepare_index += 1
-        self.upc = EXEC_MAP[self.current_instruction.op]
+            dp.operand_prepare_index += 1
+        self.upc = EXEC_MAP[dp.current_op()]
 
-    def _prepare_operand_address(self) -> None:
-        if self.current_instruction is None:
-            raise ValueError("Instruction is not decoded")
-        operand = self.current_instruction.operands[self.operand_prepare_index]
-        if operand.kind == OperandKind.INDIRECT:
-            address = self.datapath.a[operand.value]
+    def _prepare_by_kind(self) -> None:
+        operand = self.datapath.operand(self.datapath.operand_prepare_index)
+        if operand.kind in {
+            OperandKind.DIRECT,
+            OperandKind.DATA_ADDR,
+            OperandKind.CODE_ADDR,
+        }:
+            self.upc = MicroProgramStart.PREPARE_DIRECT
+        elif operand.kind == OperandKind.INDIRECT:
+            self.upc = MicroProgramStart.PREPARE_INDIRECT
+        elif operand.kind == OperandKind.POST_INC:
+            self.upc = MicroProgramStart.PREPARE_POST_INC
+        elif operand.kind == OperandKind.PRE_DEC:
+            self.upc = MicroProgramStart.PREPARE_PRE_DEC
         else:
-            address = operand.value
-        self.datapath.operand_addresses[self.operand_prepare_index] = address & 0xFFFF
-        self.last_io_event = (
-            f"EA[{self.operand_prepare_index}] <- {address & 0xFFFF:04X}"
+            raise ValueError(f"Cannot prepare address for operand: {operand}")
+
+    def _save_prepared_address(self, address: int) -> None:
+        dp = self.datapath
+        dp.operand_addresses[dp.operand_prepare_index] = address & 0xFFFF
+        self.last_io_event = f"EA[{dp.operand_prepare_index}] <- {address & 0xFFFF:04X}"
+        dp.operand_prepare_index += 1
+
+    def _write_addr_reg_from_alu(self, slot: OperandSlot, value: int) -> None:
+        dp = self.datapath
+        index = dp.operand_prepare_index
+        if slot == OperandSlot.PREVIOUS:
+            index -= 1
+        operand_count = (
+            1 if dp.current_op() == OpCode.CSTR else dp.instruction_operand_count()
         )
-        self.operand_prepare_index += 1
+        if index < 0 or index >= operand_count:
+            raise ValueError(f"No operand selected for address register update: {slot}")
+        operand = dp.operand(index)
+        if operand.kind not in {
+            OperandKind.ADDR_REG,
+            OperandKind.POST_INC,
+            OperandKind.PRE_DEC,
+        }:
+            raise ValueError(f"Operand does not update address register: {operand}")
+        dp.a[operand.value] = value & 0xFFFF
+
+    def _fetch_src_or_dispatch(self) -> None:
+        dp = self.datapath
+        if dp.current_op() == OpCode.CSTR:
+            self.upc = MicroProgramStart.FETCH_CSTR_ADDRESS_REGISTER
+            return
+        operand_count = dp.instruction_operand_count()
+        if operand_count >= 1:
+            self.upc = MicroProgramStart.FETCH_SRC_PAYLOAD
+            return
+        dp.operand_prepare_index = 0
+        dp.operand_addresses = [None] * operand_count
+        self._prepare_or_dispatch()
+
+    def _fetch_dst_or_prepare(self) -> None:
+        dp = self.datapath
+        operand_count = dp.instruction_operand_count()
+        if operand_count >= 2:
+            self.upc = MicroProgramStart.FETCH_DST_PAYLOAD
+            return
+        dp.operand_prepare_index = 0
+        dp.operand_addresses = [None] * operand_count
+        self._prepare_or_dispatch()
+
+    @staticmethod
+    def _read_u16(memory: list[int], ip: int) -> int:
+        return (memory[ip] << 8) | memory[ip + 1]
+
+    def _fetch_src_payload(self) -> None:
+        dp = self.datapath
+        kind = OperandKind((dp.operand_kinds >> 4) & 0x0F)
+        payload = self._read_u16(dp.command_memory, dp.ip)
+        dp.op0_payload = payload
+        dp.op0_desc = decode_operand_payload(kind, payload)
+        dp.ip = (dp.ip + 2) & 0xFFFF
+
+    def _fetch_dst_payload(self) -> None:
+        dp = self.datapath
+        kind = OperandKind(dp.operand_kinds & 0x0F)
+        payload = self._read_u16(dp.command_memory, dp.ip)
+        dp.op1_payload = payload
+        dp.op1_desc = decode_operand_payload(kind, payload)
+        dp.ip = (dp.ip + 2) & 0xFFFF
+
+    def _fetch_cstr_address_register(self) -> None:
+        dp = self.datapath
+        reg = dp.command_memory[dp.ip]
+        if reg not in {1, 2, 3}:
+            raise ValueError(f"Bad CSTR address register: {reg}")
+        dp.op0_payload = reg
+        dp.op0_desc = Operand(OperandKind.ADDR_REG, reg)
+        dp.ip = (dp.ip + 1) & 0xFFFF
+
+    def _fetch_cstr_char(self) -> None:
+        dp = self.datapath
+        char = dp.command_memory[dp.ip]
+        dp.op1_payload = char
+        dp.op1_desc = Operand(OperandKind.IMMEDIATE, char)
+        dp.ip = (dp.ip + 1) & 0xFFFF
+
+    def _latch_fetch(self) -> None:
+        dp = self.datapath
+        ip = dp.ip
+        op = OpCode(dp.command_memory[ip])
+        dp.reset_decode_latches()
+        dp.cr = op.value
+        if op == OpCode.CSTR:
+            dp.ip = (dp.ip + 1) & 0xFFFF
+        else:
+            operand_count = dp.instruction_operand_count()
+            if OPERAND_COUNT[op] is None:
+                raise ValueError(f"Bad operand count for opcode: {op}")
+            if operand_count > 0:
+                dp.operand_kinds = dp.command_memory[ip + 1]
+                dp.ip = (dp.ip + 2) & 0xFFFF
+            else:
+                dp.ip = (dp.ip + 1) & 0xFFFF
+
+    def _latch_ea(self, source: EaSource) -> None:
+        dp = self.datapath
+        operand = dp.operand(dp.operand_prepare_index)
+        if source == EaSource.OPERAND_PAYLOAD:
+            address = operand.value
+        elif source == EaSource.ADDRESS_REG:
+            address = dp.a[operand.value]
+        else:
+            raise ValueError(f"Unsupported EA source: {source}")
+        self._save_prepared_address(address)
+
+    def _latch_mpc(self, select: MpcSel) -> None:
+        if select == MpcSel.ZERO:
+            self.upc = 0
+        elif select == MpcSel.NEXT:
+            self.upc += 1
+        elif select == MpcSel.OPCODE:
+            self.upc = EXEC_MAP[self.datapath.current_op()]
+        elif select == MpcSel.PREPARE_OR_DISPATCH:
+            self._prepare_or_dispatch()
+        elif select == MpcSel.FETCH_SRC_OR_DISPATCH:
+            self._fetch_src_or_dispatch()
+        elif select == MpcSel.FETCH_DST_OR_PREPARE:
+            self._fetch_dst_or_prepare()
+        elif select == MpcSel.STORE_DST_IF_MEMORY:
+            self._store_dst_if_memory()
+        elif select == MpcSel.CSTR_LOOP_OR_FETCH:
+            if self.datapath.shadow_r0 == 0:
+                if self.datapath.operand_addresses:
+                    self.datapath.operand_addresses[0] = None
+                self.upc = 0
+            else:
+                self.upc += 1
+        elif select == MpcSel.CSTR_DONE_OR_NEXT_CHAR:
+            if self.datapath.shadow_r0 == 0:
+                self.upc = 0
+            else:
+                self.upc = MicroProgramStart.CSTR_READ_CHAR
+        else:
+            raise ValueError(f"Unsupported mPC selector: {select}")
+
+    def _dispatch_signal(self, signal: Signal) -> None:
+        dp = self.datapath
+        if isinstance(signal, LatchFetch):
+            self._latch_fetch()
+        elif isinstance(signal, LatchSrcPayload):
+            self._fetch_src_payload()
+        elif isinstance(signal, LatchDstPayload):
+            self._fetch_dst_payload()
+        elif isinstance(signal, LatchCstrAddressRegister):
+            self._fetch_cstr_address_register()
+        elif isinstance(signal, LatchCstrChar):
+            self._fetch_cstr_char()
+        elif isinstance(signal, LatchEa):
+            self._latch_ea(signal.source)
+        elif isinstance(signal, LatchShadowA0):
+            operand = dp.operand(dp.operand_prepare_index)
+            dp.shadow_a0 = dp.a[operand.value]
+        elif isinstance(signal, LatchShadowR0):
+            if signal.slot == OperandSlot.SRC:
+                index = 0
+            elif signal.slot == OperandSlot.DST:
+                index = dp.dst_index()
+            elif signal.slot == OperandSlot.OP1:
+                index = 1
+            else:
+                index = dp.operand_prepare_index
+            dp.shadow_r0 = self._read_operand(index)
+        elif isinstance(signal, LatchShadowR1):
+            if signal.slot == OperandSlot.DST:
+                index = dp.dst_index()
+            elif signal.slot == OperandSlot.SRC:
+                index = 0
+            else:
+                index = dp.operand_prepare_index
+            dp.shadow_r1 = self._read_operand(index)
+        elif isinstance(signal, WriteDst):
+            if signal.source == WriteSource.SHADOW_R2:
+                value = dp.shadow_r2
+            else:
+                raise ValueError(f"Unsupported write source: {signal.source}")
+            self._write_operand(dp.dst_index(), value)
+        elif isinstance(signal, AluSignal):
+            if signal.left == McSrc.SHADOW_R0:
+                left = dp.shadow_r0
+            elif signal.left == McSrc.SHADOW_R1:
+                left = dp.shadow_r1
+            elif signal.left == McSrc.SHADOW_A0:
+                left = dp.shadow_a0
+            elif signal.left == McSrc.SHADOW_R2:
+                left = dp.shadow_r2
+            else:
+                left = 0
+
+            if signal.right == McSrc.SHADOW_R0:
+                right = dp.shadow_r0
+            elif signal.right == McSrc.SHADOW_R1:
+                right = dp.shadow_r1
+            elif signal.right == McSrc.SHADOW_A0:
+                right = dp.shadow_a0
+            elif signal.right == McSrc.SHADOW_R2:
+                right = dp.shadow_r2
+            else:
+                right = 0
+
+            result = dp.execute_alu(signal.alu, left, right, signal.write_flags)
+            if signal.dst == McDst.SHADOW_R0:
+                dp.shadow_r0 = result
+            elif signal.dst == McDst.SHADOW_R1:
+                dp.shadow_r1 = result
+            elif signal.dst == McDst.SHADOW_R2:
+                dp.shadow_r2 = result
+            elif signal.dst == McDst.SHADOW_A0:
+                dp.shadow_a0 = result
+            elif signal.dst == McDst.ADDRESS_REG:
+                self._write_addr_reg_from_alu(signal.dst_slot, result)
+            elif signal.dst == McDst.DST_OR_SHADOW_R2:
+                if self._dst_is_register():
+                    self._write_operand(dp.dst_index(), result)
+                else:
+                    dp.shadow_r2 = result
+            elif signal.dst != McDst.NONE:
+                raise ValueError(f"Unsupported ALU destination: {signal.dst}")
+        elif isinstance(signal, BranchSignal):
+            self._branch()
+        elif isinstance(signal, InputSignal):
+            self._input()
+        elif isinstance(signal, OutputSignal):
+            self._output()
+        elif isinstance(signal, LatchShadowR0FromDataMemory):
+            address = dp.operand_addresses[signal.ea_index]
+            if address is None:
+                raise ValueError("No EA selected for data memory read")
+            dp.shadow_r0 = dp.data_memory[address]
+        elif isinstance(signal, OutputShadowR0):
+            address = dp.operand_addresses[0]
+            if address is None:
+                raise ValueError("OUT_CSTR has no prepared address")
+            value = dp.shadow_r0 & 0xFF
+            dp.output_buffer.append(value)
+            self.last_io_event = f"OUT_CSTR[0] <- char={value} addr={address:04X}"
+        elif isinstance(signal, LatchShadowA0FromEa):
+            address = dp.operand_addresses[signal.ea_index]
+            if address is None:
+                raise ValueError("No EA selected for shadow_a0")
+            dp.shadow_a0 = address
+        elif isinstance(signal, LatchEaFromShadowR2):
+            dp.operand_addresses[signal.ea_index] = dp.shadow_r2 & 0xFFFF
+        elif isinstance(signal, WriteCstrChar):
+            dp.data_memory[dp.a[dp.op0_payload]] = dp.shadow_r2 & 0xFF
+        elif isinstance(signal, HaltSignal):
+            self.halted = True
+        elif isinstance(signal, LatchMpc):
+            self._latch_mpc(signal.select)
+        else:
+            raise ValueError(f"Unsupported signal: {signal}")
 
     def tick(self) -> None:
         self.last_io_event = ""
-        mc = self.microcode[self.upc]
-        dp = self.datapath
-
-        if mc.op == MicroOp.FETCH:
-            inst = decode_instruction(dp.command_memory, dp.ip)
-            self.current_instruction = inst
-            dp.src_desc = inst.operands[0] if inst.operands else None
-            dp.dst_desc = inst.operands[1] if len(inst.operands) > 1 else dp.src_desc
-            dp.selected_operand = None
-            dp.operand_addresses = [None] * len(inst.operands)
-            dp.cr = inst.op.value
-            dp.ip = (dp.ip + inst.size) & 0xFFFF
-            self.operand_prepare_index = 0
-            self.cstr_addr = None
-        elif mc.op == MicroOp.PREPARE_OPERAND:
-            self._prepare_operand_address()
-        elif mc.op == MicroOp.LOAD_SRC:
-            dp.src_latch = self._read_operand(0)
-        elif mc.op == MicroOp.LOAD_DST:
-            dp.dst_latch = self._read_dst()
-        elif mc.op == MicroOp.STORE_DST:
-            self._write_dst(dp.alu_latch)
-        elif mc.op == MicroOp.ALU:
-            left = self._read_micro_source(mc.left)
-            right = self._read_micro_source(mc.right)
-            result = dp.execute_alu(mc.alu, left, right, mc.write_flags)
-            self._write_micro_destination(mc.dst, result)
-
-        if mc.move == Move.NEXT:
-            self.upc += 1
-        elif mc.move == Move.FETCH:
-            self.upc = 0
-        elif mc.move == Move.DISPATCH_OP:
-            if self.current_instruction is None:
-                raise ValueError("Cannot dispatch without instruction")
-            self.upc = EXEC_MAP[self.current_instruction.op]
-        elif mc.move == Move.PREPARE_OR_DISPATCH:
-            self._prepare_or_dispatch()
-        elif mc.move == Move.HLT:
-            self.halted = True
-        elif mc.move == Move.BRANCH:
-            self._branch()
-            self.upc = 0
-        elif mc.move == Move.IN:
-            self._input()
-            self.upc = 0
-        elif mc.move == Move.OUT:
-            self._output()
-            self.upc = 0
-        elif mc.move == Move.CSTR_LOOP_OR_FETCH:
-            self._out_cstr()
-        elif mc.move == Move.POLY_START:
-            self._poly_start()
-            self.upc = EXEC_MAP[OpCode.POLY] + 1
-        elif mc.move == Move.POLY_STEP:
-            self._poly_step()
+        signals = self.microcode[self.upc]
+        for signal in signals:
+            self._dispatch_signal(signal)
 
     def _branch(self) -> None:
-        if self.current_instruction is None:
-            raise ValueError("No instruction for branch")
-        op = self.current_instruction.op
+        op = self.datapath.current_op()
         target = self._read_operand(0) & 0xFFFF
         if op == OpCode.JMP:
             self.datapath.ip = target
@@ -401,10 +619,10 @@ class ControlUnit:
             return
         value = self.datapath.input_buffer.pop(0)
         self._write_operand(1, value)
-        self.datapath.src_latch = value
+        self.datapath.shadow_r0 = value
         self.datapath.execute_alu(AluOp.PASS, value)
         self.last_io_event = (
-            f"IN[{port}] -> {self._format_operand(self._operand(1))}={value}"
+            f"IN[{port}] -> {self._format_operand(self.datapath.operand(1))}={value}"
         )
 
     def _output(self) -> None:
@@ -414,58 +632,6 @@ class ControlUnit:
         value = self._read_operand(0) & 0xFF
         self.datapath.output_buffer.append(value)
         self.last_io_event = f"OUT[{port}] <- value={value}"
-
-    def _out_cstr(self) -> None:
-        if self.cstr_addr is None:
-            self.cstr_addr = (
-                self.datapath.read_address(self._operand(0), self._prepared_address(0))
-                & 0xFFFF
-            )
-        value = self.datapath.data_memory[self.cstr_addr]
-        if value == 0:
-            self.cstr_addr = None
-            self.upc = 0
-            return
-        self.datapath.output_buffer.append(value & 0xFF)
-        self.last_io_event = (
-            f"OUT_CSTR[0] <- char={value & 0xFF} addr={self.cstr_addr:04X}"
-        )
-        self.cstr_addr = (self.cstr_addr + 1) & 0xFFFF
-        self.upc = EXEC_MAP[OpCode.OUT_CSTR]
-
-    def _poly_start(self) -> None:
-        if self.current_instruction is None:
-            raise ValueError("No instruction for POLY")
-        operands = self.current_instruction.operands
-        self.poly_x = self._read_operand(0)
-        self.poly_index = len(operands) - 2
-        self.poly_result_raw = 0
-
-    def _poly_step(self) -> None:
-        if self.current_instruction is None:
-            raise ValueError("No instruction for POLY")
-        operands = self.current_instruction.operands
-        dst = operands[-1]
-        if self.poly_index >= 1:
-            coeff = self._read_operand(self.poly_index)
-            self.poly_result_raw = self.poly_result_raw * self.poly_x + coeff
-            self.poly_index -= 1
-            self.upc = EXEC_MAP[OpCode.POLY] + 1
-            return
-
-        result = _to_signed32(self.poly_result_raw)
-        self.datapath.write_operand(
-            dst, result, self._prepared_address(len(operands) - 1)
-        )
-        self.datapath.ps["C"] = (
-            self.poly_result_raw < 0 or self.poly_result_raw > UNSIGNED_MAX
-        )
-        self.datapath.ps["V"] = (
-            self.poly_result_raw < SIGNED_MIN or self.poly_result_raw > SIGNED_MAX
-        )
-        self.datapath.ps["N"] = result < 0
-        self.datapath.ps["Z"] = result == 0
-        self.upc = 0
 
 
 def _load_program(path: str) -> tuple[list[int], list[int], int]:
@@ -523,8 +689,8 @@ def run(
                 + str(ticks)
                 + " mode=scalar"
                 + f" uPC={cu.upc:03d} IP={dp.ip:04X} CR={dp.cr:02X} "
-                + f"R1={dp.r[0]} R2={dp.r[1]} R3={dp.r[2]} "
-                + f"A1={dp.a[0]:04X} A2={dp.a[1]:04X} A3={dp.a[2]:04X} "
+                + f"R1={dp.r[1]} R2={dp.r[2]} R3={dp.r[3]} "
+                + f"A1={dp.a[1]:04X} A2={dp.a[2]:04X} A3={dp.a[3]:04X} "
                 + "PS="
                 + f"N{int(dp.ps['N'])}Z{int(dp.ps['Z'])}"
                 + f"V{int(dp.ps['V'])}C{int(dp.ps['C'])}"
